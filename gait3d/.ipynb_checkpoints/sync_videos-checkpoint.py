@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Union
 
 from pathlib import Path
 import os
@@ -77,13 +77,6 @@ class MultiMotifTemplate(TimeseriesTemplate):
     
     def __init__(self) -> None:
         self.motif_templates = []
-    
-    
-    def _compute_template_timeseries(self) -> Optional[np.ndarray]:
-        if len(self.motif_templates) > 0:
-            return self._concatenate_motif_templates()
-        else:
-            return None
         
     
     def add_motif_template(self, motif_template: MotifTemplate) -> None:
@@ -100,7 +93,6 @@ class MultiMotifTemplate(TimeseriesTemplate):
 class SingleCamRawCalibrationData:
     
     # ToDo: refactor; probably split into separate classes
-    # ToDo: enable interface for multi motif templates
     # ToDo: code to extract reliable LED center coords from DLC tracking
     # ToDo: make max_frame_count for splitting video into parts adjustable
     # ToDo: function to join individual .mp4 parts together?
@@ -129,11 +121,24 @@ class SingleCamRawCalibrationData:
         # and confirm that they don´t include large shifts (e.g. very low z-scores only)
         # return format has to be (row_index, column_index)
         # for now, this will solely return the manually determined coords:
+        """
+        Calibration 11.08:
         coords = {'top': (249, 433),
                   'bottom': (509, 581),
                   'bottom_b': (536, 561),
                   'side1': (299, 560),
                   'side2': (293, 304)}
+        """
+        # calibration 18.08:
+        coords = {'bottom_crop': (503, 670),
+                  'bottom_nocrop': (823, 834),
+                  'Side1_crop': (456, 1168),
+                  'Side1_nocrop': (456, 1168),
+                  'Side2_crop': (425, 751),
+                  'Side2_nocrop': (425, 751),
+                  'top_crop': (336, 537),
+                  'top_nocrop': (336, 537)}
+        
         return coords[self.led_marker_id]
     
     
@@ -156,8 +161,8 @@ class SingleCamRawCalibrationData:
         return start_index, end_index
     
     
-    def find_best_match_of_motif_template(self, motif_template: MotifTemplate, start_time: int=0, end_time: int=-1, plot_result: bool=True) -> Tuple[int, int]:
-        adjusted_motif_timeseries = motif_template.adjust_template_timeseries_to_fps(fps = self.fps)
+    def find_best_match_of_template(self, template: Union[MotifTemplate, MultiMotifTemplate], start_time: int=0, end_time: int=-1, plot_result: bool=True) -> Tuple[int, int]:
+        adjusted_motif_timeseries = template.adjust_template_timeseries_to_fps(fps = self.fps)
         start_frame_idx = self._get_frame_index_clostest_to_time(time = start_time)
         end_frame_idx = self._get_frame_index_clostest_to_time(time = end_time)
         best_match_offset, best_match_start_idx = self._get_offset_and_start_index_of_best_match(adjusted_templates = adjusted_motif_timeseries,
@@ -225,7 +230,7 @@ class SingleCamRawCalibrationData:
         return (array-np.mean(array))/np.std(array, ddof=0)
     
     
-    def write_synchronized_and_fps_adjusted_calibration_video(self, start_frame_idx: int, offset: int, target_fps: int) -> None:
+    def write_synchronized_and_fps_adjusted_calibration_video(self, start_frame_idx: int, offset: int, target_fps: int, max_frame_count: int=3_000) -> None:
         original_ms_per_frame = self._get_ms_interval_per_frame(fps = self.fps)
         led_timeseries_synchronized_to_motif_start = self._crop_led_timeseries_to_motif_start(start_frame_idx = start_frame_idx, offset = offset)
         offset_adjusted_timestamps_synchronized_led_timeseries = self._adjust_timestamps_for_offset(offset = offset, 
@@ -238,7 +243,7 @@ class SingleCamRawCalibrationData:
         idxs_of_frames_to_sample_adjusted_for_synchronization = self._adjust_frame_idxs_for_synchronization(frame_idxs = idxs_of_frames_to_sample,
                                                                                                             start_frame_idx = start_frame_idx,
                                                                                                             offset = offset)
-        frame_idxs_per_part = self._split_into_ram_digestable_parts(idxs_of_frames_to_sample = idxs_of_frames_to_sample_adjusted_for_synchronization, max_frame_count = 3000)
+        frame_idxs_per_part = self._split_into_ram_digestable_parts(idxs_of_frames_to_sample = idxs_of_frames_to_sample_adjusted_for_synchronization, max_frame_count = max_frame_count)
         self._initiate_writing_of_individual_video_parts(frame_idxs_per_part = frame_idxs_per_part, target_fps = 30)
         self._concatenate_individual_video_parts_on_disk()                          
     
@@ -292,9 +297,9 @@ class SingleCamRawCalibrationData:
         
     def _split_into_ram_digestable_parts(self, idxs_of_frames_to_sample: List[int], max_frame_count: int) -> List[List[int]]:
         frame_idxs_per_part = []
-        while len(idxs_of_frames_to_sample) > 3000:
-            frame_idxs_per_part.append(idxs_of_frames_to_sample[:3000])
-            idxs_of_frames_to_sample = idxs_of_frames_to_sample[3000:]
+        while len(idxs_of_frames_to_sample) > max_frame_count:
+            frame_idxs_per_part.append(idxs_of_frames_to_sample[:max_frame_count])
+            idxs_of_frames_to_sample = idxs_of_frames_to_sample[max_frame_count:]
         frame_idxs_per_part.append(idxs_of_frames_to_sample)
         return frame_idxs_per_part
     
@@ -309,6 +314,8 @@ class SingleCamRawCalibrationData:
         selected_frames = []
         print('load original video')
         for i, frame in enumerate(iio.v3.imiter(self.filepath_video)):
+            if i > idxs_of_frames_to_sample[-1]:
+                break
             if i in idxs_of_frames_to_sample:
                 selected_frames.append(frame)
         video_array = np.asarray(selected_frames)
