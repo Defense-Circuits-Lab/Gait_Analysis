@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import imageio as iio
 import ffmpeg
+
 import cupy as cp
 
 import sys
@@ -128,7 +129,7 @@ class SingleCamRawCalibrationData:
                   'bottom_b': (536, 561),
                   'side1': (299, 560),
                   'side2': (293, 304)}
-        """
+                  
         # calibration 18.08:
         coords = {'bottom_crop': (503, 670),
                   'bottom_nocrop': (823, 834),
@@ -138,6 +139,13 @@ class SingleCamRawCalibrationData:
                   'Side2_nocrop': (425, 751),
                   'top_crop': (336, 537),
                   'top_nocrop': (336, 537)}
+        """
+        coords = {'bottom': (474, 556),
+                  'Side1': (218, 430),
+                  'Side2': (227, 331),
+                  'Ground1': (429, 378),
+                  'Ground2': (300, 418),
+                  'top': (270, 500)}
         
         return coords[self.led_marker_id]
     
