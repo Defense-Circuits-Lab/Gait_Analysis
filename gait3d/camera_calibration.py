@@ -5,6 +5,13 @@ import pandas as pd
 import numpy as np
 import pickle
 
+import aniposelib as ap_lib
+
+
+
+
+
+
 
 class TestPositionsGroundTruth:
     
@@ -131,8 +138,6 @@ class SingleCamDataForAnipose:
             self._remove_marker_ids_not_in_ground_truth(marker_ids_to_remove = marker_ids_not_in_ground_truth)
             print('The following marker_ids were deleted from the dataframe, since they were '
                   f'not present in the ground truth: {marker_ids_not_in_ground_truth}.')
-            
-            
                   
             
     def _add_missing_marker_ids_to_prediction(self, missing_marker_ids: List[str]) -> None:
@@ -162,21 +167,78 @@ class SingleCamDataForAnipose:
         setattr(self, 'flipped_vertically', flipped_vertically)
         
     
-    def run_intrinsic_camera_calibration(self, filepath_checkerboard_video: Path, save: bool=True, max_frame_count: int=300) -> None:
+    def run_intrinsic_camera_calibration(self, filepath_checkerboard_video: Path, fisheye_cam: bool, save: bool=True, max_frame_count: int=300) -> None:
         # ToDo     
         # run calibration
-        # save calibration matrix
-        self._set_intrinsic_matrix(intrinsic_matrix = intrinsic_matrix)
+        # save calibration dictionary
+        # rename to match new dictionary keys
+        self._set_adjusted_intrinsic_calibration(intrinsic_calibration = intrinsic_calibration)
         
         
     def load_intrinsic_camera_calibration(self, filepath_intrinsic_calibration: Path) -> None:
         with open(filepath_intrinsic_calibration, 'rb') as io:
-            intrinsic_matrix = pickle.load(io)
-        self._set_intrinsic_matrix(intrinsic_matrix = intrinsic_matrix)
+            intrinsic_calibration = pickle.load(io)
+        # ToDo
+        # rename to match new dictionary keys
+        self._set_adjusted_intrinsic_calibration(intrinsic_calibration = intrinsic_calibration)
     
     
-    def _set_intrinsic_matrix(self, intrinsic_matrix: np.ndarray) -> None:
-        setattr(self, 'intrinsic_matrix', intrinsic_matrix)
+    def _set_adjusted_intrinsic_calibration(self, intrinsic_calibration: Dict) -> None:
+        # ToDo
+        # adjust intrinsic calibration to cropping offsets, taking flipping & rotations into account
+        # rename to match new dictionary keys
+        setattr(self, 'adjusted_intrinsic_calibration', intrinsic_calibration)
 
 
-#class CalibrationForAnipose3DTracking:
+    def export_as_aniposelib_Camera_object(self) -> ap_lib.cameras.Camera:
+        camera = ap_lib.cameras.Camera(name = self.cam_id,
+                                       size = self.adjusted_intrinsic_calibration['size'],
+                                       rvec = self.adjusted_intrinsic_calibration['rvec'],
+                                       tvec = self.adjusted_intrinsic_calibration['tvec'],
+                                       matrix = self.adjusted_intrinsic_calibration['matrix'],
+                                       dist = self.adjusted_intrinsic_calibration['dist'],
+                                       extra_dist = False)
+        return camera
+        
+
+        
+        
+        
+        
+class CalibrationForAnipose3DTracking:
+
+    def __init__(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]) -> None:
+        self._validate_unique_cam_ids(single_cams_to_calibrate = single_cams_to_calibrate)
+        self.__get_all_calibration_video_filepaths(single_cams_to_calibrate = single_cams_to_calibrate)
+        self._initialize_camera_group(single_cams_to_calibrate = single_cams_to_calibrate)
+        
+    
+    def _validate_unique_cam_ids(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]) -> None:
+        # ToDo
+        pass
+
+
+    def _get_all_calibration_video_filepaths(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]) -> None:
+        video_filpaths = [single_cam.filepath_synchronized_calibration_video for single_cam in single_cams_to_calibrate]
+        setattr(self, 'calibration_video_filepaths', video_filepaths)
+
+
+    def _initialize_camera_group(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]) -> None:
+        all_Camera_objects = [single_cam.export_as_aniposelib_Camera_object() for single_cam in single_cams_to_calibrate]
+        setattr(self, 'camera_group', ap_lib.cameras.CameraGroup(all_Camera_objects))
+    
+
+    def run_calibration(self, use_own_intrinsic_calibration: bool=True, charuco_calibration_board: Optional[aruco.Dictionary]) -> None:
+        if charuco_calibration_board == None:
+            aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
+            charuco_calibration_board = ap_lib.boards.CharucoBoard(7, 5, square_length=1, marker_length=0.8, marker_bits=6, aruco_dict=aruco_dict)
+        self.camera_group.calibrate_videos(videos = self.calibration_video_filepaths, 
+                                           board = charuco_calibration_board,
+                                           init_intrinsics = not use_own_intrinsic_calibration, 
+                                           init_extrinsics = True)
+
+    def save_calibration(self, filepath: Path) -> None:
+        # ToDo
+        # validate filepath and extension (.toml)
+        # and add default alternative
+        self.camera_group.dump(filepath)     
