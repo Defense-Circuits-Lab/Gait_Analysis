@@ -9,6 +9,13 @@ import imageio as iio
 
 import aniposelib as ap_lib
 
+# ToDo:
+# Should the SingleCamDataForAnipose & the CalibrationForAnipose3DTracking only be 
+#   subclasses of a more general parent that could then also be used as base class
+#   to process the actual experimental recordings? Here only triangulation would be
+#   needed & calibration should be loaded and error estimation based on test position
+#   markers would not be neccessary!
+
 
 class IntrinsicCameraCalibrator(ABC):
     #https://medium.com/@kennethjiang/calibrate-fisheye-lens-using-opencv-333b05afa0b0
@@ -86,6 +93,8 @@ class IntrinsicCameraCalibrator(ABC):
 
 
     def _attempt_to_reach_max_frame_count(self, corners_per_image: List[np.ndarray], already_selected_frame_idxs: List[int]) -> List[np.ndarray]:
+        # ToDo
+        # limit time?
         total_frame_count = self.video_reader.count_frames()
         for idx in range(total_frame_count):
             if len(corners_per_image) < self.max_frame_count:
@@ -99,7 +108,10 @@ class IntrinsicCameraCalibrator(ABC):
 
 
     def _construct_calibration_results(self, K: np.ndarray, D: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> Dict:
-        # ToDo: confirm type hints
+        # ToDo: 
+        # confirm type hints
+        # Potentially add more parameters that might be required for adjusting this intrinsic
+        #    calibration to cropping or flipping of the actual recordings (both calibration and experiment)
         calibration_results = {"K": K, "D": D, "rvec": rvec, "tvec": tvec, "size": self.imsize}
         setattr(self, 'calibration_results', calibration_results)
         return calibration_results
@@ -155,9 +167,6 @@ class IntrinsicCameraCalibrator(ABC):
                                                                              cv2.CALIB_CB_ADAPTIVE_THRESH+cv2.CALIB_CB_NORMALIZE_IMAGE)
         if checkerboard_detected:
             predicted_corners = cv2.cornerSubPix(gray_scale_image, predicted_corners, (3,3), (-1,-1), self.subpix_criteria)
-            # the previous line was like this in the earlier version of the code:
-            # cv2.cornerSubPix(gray,corners,(3,3),(-1,-1),subpix_criteria)
-            # but shouldn´t corners be overwritten with the SubPix result?
         return checkerboard_detected, predicted_corners
 
         
@@ -195,11 +204,19 @@ class TestPositionsGroundTruth:
         self.unique_marker_ids = []
         self._add_maze_corners()
 
+    # ToDo:
+    # remove marker id?
     
     def add_new_marker_id(self, marker_id: str, other_marker_ids_with_distances: List[Tuple[str, Union[int, float]]]) -> None:
         for other_marker_id, distance in other_marker_ids_with_distances:
             self._add_ground_truth_information(marker_id_a = marker_id, marker_id_b = other_marker_id, distance = distance)
             self._add_ground_truth_information(marker_id_a = other_marker_id, marker_id_b = marker_id, distance = distance)
+            
+    
+    def add_marker_ids_to_be_connected_in_3d_plots(self, marker_ids: Tuple[str]) -> None:
+        # ToDo
+        # build scheme
+        # set scheme as attribute
 
 
     def load_from_disk(self, filepath: Path) -> None:
@@ -266,9 +283,9 @@ class SingleCamDataForAnipose:
 
     def export_as_aniposelib_Camera_object(self) -> ap_lib.cameras.Camera:
         camera = ap_lib.cameras.Camera(name = self.cam_id,
-                                       size = self.intrinsic_calibration_for_anipose['size'],
-                                       rvec = self.intrinsic_calibration_for_anipose['rvec'],
-                                       tvec = self.intrinsic_calibration_for_anipose['tvec'],
+                                       size = self.intrinsic_calibration_for_anipose['size'], # of original intrinsic calibration video or of cropped? cropped!
+                                       rvec = self.intrinsic_calibration_for_anipose['rvec'], # optional since extrinsic
+                                       tvec = self.intrinsic_calibration_for_anipose['tvec'], # optional since extrinsic
                                        matrix = self.intrinsic_calibration_for_anipose['K'],
                                        dist = self.intrinsic_calibration_for_anipose['D'],
                                        extra_dist = False)
@@ -285,6 +302,7 @@ class SingleCamDataForAnipose:
     def load_test_position_markers_df_from_dlc_prediction(self, filepath_deeplabcut_prediction: Path) -> None:
         df = pd.read_hdf(filepath_deeplabcut_prediction)
         setattr(self, 'test_position_markers_df', df)
+        setattr(self, 'filepath_test_position_marker_prediction', filepath_deeplabcut_prediction)
  
     
     def run_intrinsic_camera_calibration(self, filepath_checkerboard_video: Path, fisheye_cam: bool, save: bool=True, max_frame_count: int=300) -> None:
@@ -341,7 +359,6 @@ class SingleCamDataForAnipose:
                   f'not present in the ground truth: {marker_ids_not_in_ground_truth}.')
     
     
-    
     def _add_missing_marker_ids_to_prediction(self, missing_marker_ids: List[str]) -> None:
         df = self.test_position_markers_df
         scorer = list(df.columns)[0][0]
@@ -351,20 +368,15 @@ class SingleCamDataForAnipose:
 
 
     def _adjust_intrinsic_calibration(self, unadjusted_intrinsic_calibration: Dict) -> Dict:
-        # ToDo
-        # adjust intrinsic calibration to cropping offsets, taking flipping & rotations into account
         adjusted_intrinsic_calibration = unadjusted_intrinsic_calibration.copy()
-        """
-        K = bot_dict["K"].copy()
-        width, height = 1280, 960
-        video = imageio.get_reader("/Users/kobel/Documents/Medizin/Doktorarbeit/Coding/Aniposelib test/Test 220822/Bottom_charuco.mp4")
-        size = video.get_meta_data()["size"]
-        c_width, c_height = size[0], size[1]
-        x_offset = 188
-        y_offset = 0
-        x_offset2 = width - c_width - x_offset
-        y_offset2 = height - c_height - y_offset
-        """
+        # is the following the correct size? current "size" value was determined on grayscale image
+        intrinsic_calibration_video_size = unadjusted_intrinsic_calibration['size']
+        new_video_size = self._get_anipose_calibration_video_size()
+        x_offset, y_offset = self._get_correct_x_y_offsets(intrinsic_calibration_video_size = intrinsic_calibration_video_size, new_video_size = new_video_size)
+        adjusted_K = self._get_adjusted_K(K = unadjusted_intrinsic_calibration['K'], x_offset = x_offset, y_offset = y_offset)
+        adjusted_intrinsic_calibration = self._incorporate_adjustments_in_intrinsic_calibration(intrinsic_calibration = unadjusted_intrinsic_calibration.copy(),
+                                                                                                new_size = new_video_size,
+                                                                                                adjusted_K = adjusted_K)
         return adjusted_intrinsic_calibration
 
 
@@ -379,6 +391,29 @@ class SingleCamDataForAnipose:
     def _find_non_matching_marker_ids(self, marker_ids_to_match: List[str], template_marker_ids: List[str]) -> List:
         return [marker_id for marker_id in marker_ids_to_match if marker_id not in template_marker_ids]
 
+
+    def _get_adjusted_K(self, K: np.ndarray, x_offset: int, y_offset: int) -> np.ndarray:
+        adjusted_K = K.copy()
+        adjusted_K[0][2] = adjusted_K[0][2] - x_offset
+        adjusted_K[1][2] = adjusted_K[1][2] - y_offset
+        return adjusted_K  
+    
+    
+    def _get_anipose_calibration_video_size(self) -> Tuple[int, int]:
+        video_reader = iio.get_reader(self.filepath_synchronized_calibration_video)
+        return video_reader.get_metadata()['size']
+    
+    
+    def _get_correct_x_y_offsets(self, intrinsic_calibration_video_size: Tuple[int, int], new_video_size: Tuple[int, int]) -> Tuple[int, int]:
+        # ToDo: 
+        # determine which cropping offsets are the correct ones to compute, probably in dependency of flipping & rotation settings?
+        if (not self.flipped_horizontally) and (not self.flipped_vertically):
+            x_offset, y_offset = self.cropping_offsets
+        # alternatives might be something like:
+        # x_offset = intrinsic_calibration_video_size[0] - new_video_size[0] - self.cropping_offsets[0]
+        # y_offset = intrinsic_calibration_video_size[1] - new_video_size[1] - self.cropping_offsets[1]
+        return x_offset, y_offset
+
     
     def _get_multi_index(self) -> pd.MultiIndex:
         multi_index_column_names = [[], [], []]
@@ -390,6 +425,12 @@ class SingleCamDataForAnipose:
         return pd.MultiIndex.from_arrays(multi_index_column_names, names=('scorer', 'bodyparts', 'coords'))
 
 
+    def _incorporate_adjustments_in_intrinsic_calibration(intrinsic_calibration: Dict, new_size: Tuple[int, int], adjusted_K: np.ndarray) -> Dict:
+        intrinsic_calibration['size'] = new_size
+        intrinsic_calibration['K'] = adjusted_K
+        return intrinsic_calibration
+
+
     def _is_adjusting_of_intrinsic_calibration_required(self, unadjusted_intrinsic_calibration: Dict) -> bool:
         adjusting_required = False
         # ToDo:
@@ -397,6 +438,8 @@ class SingleCamDataForAnipose:
         # intrinsic calibration and size of anipose calibration
         # video are not matching, if cropping offsetts or if
         # flipping infos are passed & relevant)
+        if any([self.cropping_offsets != (0, 0), self.flipped_horizontally, self.flipped_vertically]):
+            adjusting_required = True
         return adjusting_required
 
 
@@ -416,12 +459,25 @@ class SingleCamDataForAnipose:
 class CalibrationForAnipose3DTracking:
 
     def __init__(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]) -> None:
+        # ToDo: validate unique filepaths
         self._validate_unique_cam_ids(single_cams_to_calibrate = single_cams_to_calibrate)
-        self._get_all_calibration_video_filepaths(single_cams_to_calibrate = single_cams_to_calibrate)
-        self._initialize_camera_group(single_cams_to_calibrate = single_cams_to_calibrate)
+        # potentially it would make sense to call the following method already here?
+        # or is there a reason why you would
+        # self._validate_test_position_markers_df_is_loaded_to_all_single_cam_objects()
+        self.single_cam_objects = single_cams_to_calibrate
+        self._get_all_calibration_video_filepaths()
+        self._initialize_camera_group()
 
 
-    def run_calibration(self, use_own_intrinsic_calibration: bool=True, charuco_calibration_board: Optional[aruco.Dictionary]) -> None:
+    @property
+    def score_threshold(self) -> float:
+        return 0.5
+
+
+    def run_calibration(self, use_own_intrinsic_calibration: bool=True, charuco_calibration_board: Optional[ap_lib.boards.CharucoBoard]) -> None:
+        # ToDo
+        # possibility to add verbose=False in calibrate_videos() call to avoid lengthy output?
+        # confirm type hinting 
         if charuco_calibration_board == None:
             aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
             charuco_calibration_board = ap_lib.boards.CharucoBoard(7, 5, square_length=1, marker_length=0.8, marker_bits=6, aruco_dict=aruco_dict)
@@ -429,6 +485,25 @@ class CalibrationForAnipose3DTracking:
                                            board = charuco_calibration_board,
                                            init_intrinsics = not use_own_intrinsic_calibration, 
                                            init_extrinsics = True)
+        
+        
+    def evaluate_triangulation_of_test_position_markers(self, test_positions_gt: TestPositionsGroundTruth, show_3D_plot: bool=True, verbose: bool=True) -> None:
+        # ToDo
+        # validate that all SingleCamDataForAnipose objects have the corresponding 'test_position_markers_df' attribute
+        # run triangulation
+        # compute all errors:
+        #    - reprojection errors given by anipose
+        #    - differences in triangulated vs. measured ground-truth distances
+        # if verbose: report errors & ideally add what range of values are acceptable
+        # if show_3D_plot: plot the triangulated test positions in 3D
+        self._validate_test_position_markers_df_is_loaded_to_all_single_cam_objects()
+        anipose_triangulation_io = self._preprocess_dlc_predictions_for_anipose()
+        anipose_triangulation_io['p3ds_flat'] = self.camera_group.triangulate(anipose_triangulation_io['points_flat'], progress=True)
+        anipose_triangulation_io = self._postprocess_triangulations_and_calculate_reprojection_error(anipose_triangulation_io = anipose_triangulation_io)
+        # Continue here with implementation of the different test positions distance errors
+        #   then add verbose outputs, like:
+        # print("Mean reprojection error:", anipose_triangulation_io['reproj_nonan'].mean())
+        #   and finally finish with the 3D Plot
 
 
     def save_calibration(self, filepath: Path) -> None:
@@ -438,13 +513,55 @@ class CalibrationForAnipose3DTracking:
         self.camera_group.dump(filepath)
 
 
-    def _get_all_calibration_video_filepaths(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]) -> None:
-        video_filpaths = [single_cam.filepath_synchronized_calibration_video for single_cam in single_cams_to_calibrate]
+    def _preprocess_dlc_predictions_for_anipose(self) -> Dict:
+        fname_dict = {}
+        for single_cam in self.single_cam_objects:
+            fname_dict[single_cam.cam_id] = single_cam.filepath_test_position_marker_prediction
+        anipose_triangulation_io = ap_lib.utils.load_pose2d_fnames(fname_dict = fname_dict)
+        anipose_triangulation_io = self._add_additional_information_and_continue_preprocessing(d = anipose_triangulation_io)
+        return anipose_triangulation_io
+
+
+    def _postprocess_triangulations_and_calculate_reprojection_error(self, anipose_triangulation_io: Dict) -> Dict:
+        anipose_triangulation_io['reprojerr_flat'] = self.camera_group.reprojection_error(anipose_triangulation_io['p3ds_flat'], 
+                                                                                          anipose_triangulation_io['points_flat'],
+                                                                                          mean=True)
+        anipose_triangulation_io['p3ds'] = anipose_triangulation_io['p3ds_flat'].reshape(anipose_triangulation_io['n_points'], 
+                                                                                         anipose_triangulation_io['n_joints'],
+                                                                                         3)
+        anipose_triangulation_io['reprojerr'] = anipose_triangulation_io['reprojerr_flat'].reshape(anipose_triangulation_io['n_points'],
+                                                                                                   anipose_triangulation_io['n_joints'])
+        anipose_triangulation_io['reproj_nonan'] = anipose_triangulation_io['reprojerr'][np.logical_not(np.isnan(anipose_triangulation_io['reprojerr']))]
+        return anipose_triangulation_io
+        
+
+    def _add_additional_information_and_continue_preprocessing(self, d: Dict) -> Dict: 
+        n_cams, d['n_points'], d['n_joints'], _ = d['points'].shape
+        d['points'][d['scores'] < self.score_threshold] = np.nan
+        d['points_flat'] = d['points'].reshape(n_cams, -1, 2)
+        d['scores_flat'] = d['scores'].reshape(n_cams, -1)
+        return d
+        
+        
+    def _validate_test_position_markers_df_is_loaded_to_all_single_cam_objects(self):
+        # re-run validation on single_cam object
+        for single_cam in self.single_cam_objects:
+            if hasattr(single_cam, 'test_position_markers_df') == False:
+                raise ValueError('For this evaluation, all SingleCamDataForAnipose objects must have '
+                                 'loaded the predicted coordinates of the test position marker ids. '
+                                 'However, this data is missing for the SingleCamDataForAnipose object '
+                                 f'with the cam_id: {single_cam.cam_id}. Please load it to this object '
+                                 'by calling it´s ".load_test_position_markers_df_from_dlc_prediction()" '
+                                 'method.')
+
+
+    def _get_all_calibration_video_filepaths(self) -> None:
+        video_filpaths = [single_cam.filepath_synchronized_calibration_video for single_cam in self.single_cam_objects]
         setattr(self, 'calibration_video_filepaths', video_filepaths)
 
 
-    def _initialize_camera_group(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]) -> None:
-        all_Camera_objects = [single_cam.export_as_aniposelib_Camera_object() for single_cam in single_cams_to_calibrate]
+    def _initialize_camera_group(self) -> None:
+        all_Camera_objects = [single_cam.export_as_aniposelib_Camera_object() for single_cam in self.single_cam_objects]
         setattr(self, 'camera_group', ap_lib.cameras.CameraGroup(all_Camera_objects))
 
 
