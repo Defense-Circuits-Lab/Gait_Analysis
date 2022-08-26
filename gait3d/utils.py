@@ -21,7 +21,6 @@ def plot_image(filepath: Path, idx: int=0, plot_size: Tuple[int, int]=(9,6)) -> 
     fig = plt.figure(figsize=plot_size, facecolor='white')
     image = load_image(filepath = filepath, idx = idx) 
     plt.imshow(image)
-    plt.show()
     
     
 def plot_single_frame_of_video(filepath: Path, frame_idx: int=0, plot_size: Tuple[int, int]=(9,6)) -> None:

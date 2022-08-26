@@ -9,6 +9,7 @@ import itertools as it
 import imageio as iio
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import cv2
 
 import aniposelib as ap_lib
 
@@ -33,14 +34,13 @@ class IntrinsicCameraCalibrator(ABC):
     #https://medium.com/@kennethjiang/calibrate-fisheye-lens-using-opencv-333b05afa0b0
     
     @abstractmethod 
-    def _run_cam_type_specific_calibration(self, objpoints: List[np.ndarray], imgpoints: List[np.ndarray]) -> Tuple:
+    def _run_camera_type_specific_calibration(self, objpoints: List[np.ndarray], imgpoints: List[np.ndarray]) -> Tuple:
         # wrapper to camera type specific calibration function
         # all remaining data is stored in attributes of the object
         pass
 
 
     def __init__(self, filepath_calibration_video: Path, max_frame_count: int) -> None:
-        import cv2 
         self.video_filepath = filepath_calibration_video
         self.max_frame_count = max_frame_count
         self.video_reader = iio.get_reader(filepath_calibration_video)
@@ -97,11 +97,15 @@ class IntrinsicCameraCalibrator(ABC):
 
 
     def _attempt_to_match_max_frame_count(self, corners_per_image: List[np.ndarray], already_selected_frame_idxs: List[int]) -> List[np.ndarray]:
+        print(f'Frames with detected checkerboard: {len(corners_per_image)}.')
         if len(corners_per_image) < self.max_frame_count:
+            print('Trying to find some more ...')
             corners_per_image = self._attempt_to_reach_max_frame_count(corners_per_image = corners_per_image, 
                                                                        already_selected_frame_idxs = already_selected_frame_idxs)
+            print(f'Done. Now we are at a total of {len(corners_per_image)} frames in which I could detect a checkerboard.')
         elif len(corners_per_image) > self.max_frame_count:
             corners_per_image = self._limit_to_max_frame_count(all_detected_corners = corners_per_image)
+            print(f'Limited them to only {len(corners_per_image)}.')
         return corners_per_image
 
 
@@ -168,8 +172,9 @@ class IntrinsicCameraCalibrator(ABC):
 
 
     def _limit_to_max_frame_count(self, all_detected_corners: List[np.ndarray]) -> List[np.ndarray]:
-        sampling_idxs = np.linspace(0, len(all_detected_corners), endpoint=False, dtype=int)
-        return all_detected_corners[sampling_idxs]
+        sampling_idxs = np.linspace(0, len(all_detected_corners), self.max_frame_count, endpoint=False, dtype=int)
+        sampled_corners = np.asarray(all_detected_corners)[sampling_idxs]
+        return list(sampled_corners)
 
 
     def _run_checkerboard_corner_detection(self, idx: int) -> Tuple[bool, np.ndarray]:
@@ -179,7 +184,7 @@ class IntrinsicCameraCalibrator(ABC):
                                                                              self.checkerboard_rows_and_columns, 
                                                                              cv2.CALIB_CB_ADAPTIVE_THRESH+cv2.CALIB_CB_NORMALIZE_IMAGE)
         if checkerboard_detected:
-            predicted_corners = cv2.cornerSubPix(gray_scale_image, predicted_corners, (3,3), (-1,-1), self.subpix_criteria)
+            predicted_corners = cv2.cornerSubPix(gray_scale_image, predicted_corners, (3,3), (-1,-1), self.subpixel_criteria)
         return checkerboard_detected, predicted_corners
 
         
@@ -193,7 +198,7 @@ class IntrinsicCalibratorFisheyeCamera(IntrinsicCameraCalibrator):
         return rvecs, tvecs
 
 
-    def _run_cam_type_specific_calibration(self, objpoints: List[np.ndarray], imgpoints: List[np.ndarray]) -> Tuple:
+    def _run_camera_type_specific_calibration(self, objpoints: List[np.ndarray], imgpoints: List[np.ndarray]) -> Tuple:
         rvecs, tvecs = self._compute_rvecs_and_tvecs(n_detected_boards = len(objpoints))
         calibration_flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC + cv2.fisheye.CALIB_CHECK_COND + cv2.fisheye.CALIB_FIX_SKEW
         new_subpixel_criteria = (cv2.TERM_CRITERIA_EPS+cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-6)
@@ -203,8 +208,8 @@ class IntrinsicCalibratorFisheyeCamera(IntrinsicCameraCalibrator):
         
 class IntrinsicCalibratorRegularCamera(IntrinsicCameraCalibrator):
     
-    def _run_cam_type_specific_calibration(self, objpoints: List[np.ndarray], imgpoints: List[np.ndarray]) -> Tuple:
-        return cv2.calibrateCamera(objpoints, imgpoints, imsize, None, None)        
+    def _run_camera_type_specific_calibration(self, objpoints: List[np.ndarray], imgpoints: List[np.ndarray]) -> Tuple:
+        return cv2.calibrateCamera(objpoints, imgpoints, self.imsize, None, None)        
 
 
 
@@ -214,6 +219,9 @@ class TestPositionsGroundTruth:
 
     # ToDo:
     # Add method that allows to remove marker id?
+    
+    # ToDo:
+    # include "add_marker_ids_to_be_connected_in_3d_plots" and "reference_distance_ids_with_corresponding_marker_ids" in save & load functions?
     
     def __init__(self) -> None:
         self.marker_ids_with_distances = {}
@@ -250,7 +258,7 @@ class TestPositionsGroundTruth:
             marker_ids_with_distances = pickle.load(io)
         unique_marker_ids = list(marker_ids_with_distances.keys())
         setattr(self, 'marker_ids_with_distances', marker_ids_with_distances)
-        setattr(self. 'unique_marker_ids', unique_marker_ids)
+        setattr(self, 'unique_marker_ids', unique_marker_ids)
 
 
     def save_to_disk(self, filepath: Path) -> None:
@@ -355,7 +363,7 @@ class SingleCamDataForAnipose:
         self._set_intrinsic_calibration(intrinsic_calibration = intrinsic_calibration, adjusting_required = adjusting_required)
 
                 
-    def save_manual_marker_coords_as_fake_dlc_output(self, output_filepath: Optional[Path]):
+    def save_manual_marker_coords_as_fake_dlc_output(self, output_filepath: Optional[Path]=None):
         # ToDo: this could very well be suitable to become extracted to a utils function
         #       it could then easily be re-used as "validate_output_filename_and_path"
         #       if for instance the extension string, the defaults, and the warning message
@@ -422,7 +430,7 @@ class SingleCamDataForAnipose:
         attributes_and_default_value_setters = {'cropping_offsets': self.add_cropping_offsets,
                                                 'flipped_horizontally': self.add_flipping_details, 
                                                 'degrees_rotated_clockwise': self.add_rotation_details}
-        for attribute_name, default_setter in attributes_and_default_value_setters:
+        for attribute_name, default_setter in attributes_and_default_value_setters.items():
             if hasattr(self, attribute_name) == False:
                 default_setter()
                 if attribute_name == 'flipped_horizontally':
@@ -430,7 +438,7 @@ class SingleCamDataForAnipose:
                 else:
                     key_to_print = attribute_name
                 print(f'User info: since no other information were provided, "{key_to_print}" '
-                      f'were set to the corresponding default values: {self.attribute_name}.')
+                      f'were set to the corresponding default values: {getattr(self, attribute_name)}.')
 
 
     def _construct_dlc_output_style_df_from_manual_marker_coords(self) -> pd.DataFrame:
@@ -528,14 +536,14 @@ class CalibrationForAnipose3DTracking:
         anipose_io = self._add_reprojection_errors_of_all_test_position_markers(anipose_io = anipose_io)
         anipose_io = self._add_all_real_distances_errors(anipose_io = anipose_io, test_positions_gt = test_positions_gt)
         if verbose:
-        print("Mean reprojection error:", anipose_triangulation_io['reproj_nonan'].mean())
-        for reference_distance_id, distance_errors in anipose_io['distance_errors_in_cm'].items():
-            print(f'Using {reference_distance_id} as reference distance, the mean distance error is: {distance_errors['mean_error']} cm.')
+            print(f'Mean reprojection error: {anipose_triangulation_io["reproj_nonan"].mean()}')
+            for reference_distance_id, distance_errors in anipose_io['distance_errors_in_cm'].items():
+                print(f'Using {reference_distance_id} as reference distance, the mean distance error is: {distance_errors["mean_error"]} cm.')
         if show_3D_plot:
             self._show_3D_plot(frame_idx = 0, anipose_io = anipose_io, marker_ids_to_connect = test_positions_gt.marker_ids_to_connect_in_3D_plot)
 
 
-    def run_calibration(self, use_own_intrinsic_calibration: bool=True, charuco_calibration_board: Optional[ap_lib.boards.CharucoBoard]) -> None:
+    def run_calibration(self, use_own_intrinsic_calibration: bool=True, charuco_calibration_board: Optional[ap_lib.boards.CharucoBoard]=None) -> None:
         # ToDo
         # possibility to add verbose=False in calibrate_videos() call to avoid lengthy output?
         # confirm type hinting 
