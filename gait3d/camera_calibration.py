@@ -13,6 +13,8 @@ import cv2
 
 import aniposelib as ap_lib
 
+from .utils import load_single_frame_of_video
+
 # ToDo:
 # Should the SingleCamDataForAnipose & the CalibrationForAnipose3DTracking only be 
 #   subclasses of a more general parent that could then also be used as base class
@@ -137,7 +139,9 @@ class IntrinsicCameraCalibrator(ABC):
 
 
     def _compute_object_points(self, n_detected_boards: int) -> List[np.ndarray]:
-        object_points = list(self.objp)*n_detected_boards
+        object_points = []
+        for i in range(n_detected_boards):
+            object_points.append(self.objp)
         return object_points
 
 
@@ -183,8 +187,8 @@ class IntrinsicCameraCalibrator(ABC):
         checkerboard_detected, predicted_corners = cv2.findChessboardCorners(gray_scale_image, 
                                                                              self.checkerboard_rows_and_columns, 
                                                                              cv2.CALIB_CB_ADAPTIVE_THRESH+cv2.CALIB_CB_NORMALIZE_IMAGE)
-        if checkerboard_detected:
-            predicted_corners = cv2.cornerSubPix(gray_scale_image, predicted_corners, (3,3), (-1,-1), self.subpixel_criteria)
+        #if checkerboard_detected:
+            #predicted_corners = cv2.cornerSubPix(gray_scale_image, predicted_corners, (3,3), (-1,-1), self.subpixel_criteria)
         return checkerboard_detected, predicted_corners
 
         
@@ -298,8 +302,9 @@ class SingleCamDataForAnipose:
     # software is running and the camera was loaded. This is at least our best guess
     # for the inconsistent behavior & warrants further testing.
     
-    def __init__(self, cam_id: str, filepath_synchronized_calibration_video: Path) -> None:
+    def __init__(self, cam_id: str, filepath_synchronized_calibration_video: Path, fisheye: bool=False) -> None:
         self.cam_id = cam_id
+        self.fisheye = fisheye
         self.filepath_synchronized_calibration_video = filepath_synchronized_calibration_video
 
 
@@ -336,6 +341,17 @@ class SingleCamDataForAnipose:
                                        dist = self.intrinsic_calibration_for_anipose['D'],
                                        extra_dist = False)
         return camera
+    
+    
+    def inspect_intrinsic_calibration(self, frame_idx: int=0) -> None:
+        distorted_input_image = load_single_frame_of_video(filepath = self.filepath_synchronized_calibration_video, frame_idx = frame_idx)
+        if self.fisheye:
+            undistorted_output_image = self._undistort_fisheye_image_for_inspection(image = distorted_input_image)
+        else:
+            undistorted_output_image = cv2.undistort(distorted_input_image, 
+                                                     self.intrinsic_calibration_for_anipose['K'], 
+                                                     self.intrinsic_calibration_for_anipose['D'])
+        self._plot_distorted_and_undistorted_image(distorted_image = distorted_input_image, undistorted_image = undistorted_output_image)          
 
 
     def load_intrinsic_camera_calibration(self, filepath_intrinsic_calibration: Path) -> None:
@@ -351,8 +367,8 @@ class SingleCamDataForAnipose:
         setattr(self, 'filepath_test_position_marker_prediction', filepath_deeplabcut_prediction)
  
     
-    def run_intrinsic_camera_calibration(self, filepath_checkerboard_video: Path, fisheye_cam: bool, save: bool=True, max_frame_count: int=300) -> None:
-        if fisheye_cam:
+    def run_intrinsic_camera_calibration(self, filepath_checkerboard_video: Path, save: bool=True, max_frame_count: int=300) -> None:
+        if self.fisheye:
             calibrator = IntrinsicCalibratorFisheyeCamera(filepath_calibration_video = filepath_checkerboard_video, max_frame_count = max_frame_count)
         else:
             calibrator = IntrinsicCalibratorRegularCamera(filepath_calibration_video = filepath_checkerboard_video, max_frame_count = max_frame_count)
@@ -462,7 +478,7 @@ class SingleCamDataForAnipose:
     
     def _get_anipose_calibration_video_size(self) -> Tuple[int, int]:
         video_reader = iio.get_reader(self.filepath_synchronized_calibration_video)
-        return video_reader.get_metadata()['size']
+        return video_reader.get_meta_data()['size']
     
     
     def _get_correct_x_y_offsets(self, intrinsic_calibration_video_size: Tuple[int, int], new_video_size: Tuple[int, int]) -> Tuple[int, int]:
@@ -486,7 +502,7 @@ class SingleCamDataForAnipose:
         return pd.MultiIndex.from_arrays(multi_index_column_names, names=('scorer', 'bodyparts', 'coords'))
 
 
-    def _incorporate_adjustments_in_intrinsic_calibration(intrinsic_calibration: Dict, new_size: Tuple[int, int], adjusted_K: np.ndarray) -> Dict:
+    def _incorporate_adjustments_in_intrinsic_calibration(self, intrinsic_calibration: Dict, new_size: Tuple[int, int], adjusted_K: np.ndarray) -> Dict:
         intrinsic_calibration['size'] = new_size
         intrinsic_calibration['K'] = adjusted_K
         return intrinsic_calibration
@@ -498,7 +514,19 @@ class SingleCamDataForAnipose:
         if any([self.cropping_offsets != (0, 0), self.flipped_horizontally, self.flipped_vertically, self.degrees_rotated_clockwise != 0]):
             adjusting_required = True
         return adjusting_required     
-    
+            
+            
+    def _plot_distorted_and_undistorted_image(self, distorted_image: np.ndarray, undistorted_image: np.ndarray) -> None:
+        fig = plt.figure(figsize=(12, 5), facecolor='white')
+        gs = fig.add_gridspec(1, 2)
+        ax1 = fig.add_subplot(gs[0, 0])
+        plt.imshow(distorted_image)
+        plt.title('raw image')
+        ax2 = fig.add_subplot(gs[0, 1])
+        plt.imshow(undistorted_image)
+        plt.title('undistorted image based on intrinsic calibration')
+        plt.show()
+
 
     def _remove_marker_ids_not_in_ground_truth(self, marker_ids_to_remove: List[str]) -> None:
         df = self.test_position_markers_df
@@ -510,6 +538,22 @@ class SingleCamDataForAnipose:
         if adjusting_required:
             intrinsic_calibration = self._adjust_intrinsic_calibration(unadjusted_intrinsic_calibration = intrinsic_calibration)
         setattr(self, 'intrinsic_calibration_for_anipose', intrinsic_calibration)
+        
+        
+    def _undistort_fisheye_image_for_inspection(self, image: np.ndarray) -> np.ndarray:
+        k_for_fisheye = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.intrinsic_calibration_for_anipose['K'], 
+                                                                               self.intrinsic_calibration_for_anipose['D'], 
+                                                                               self.intrinsic_calibration_for_anipose['size'], 
+                                                                               np.eye(3), 
+                                                                               balance=0)
+        map1, map2 = cv2.fisheye.initUndistortRectifyMap(self.intrinsic_calibration_for_anipose['K'], 
+                                                         self.intrinsic_calibration_for_anipose['D'], 
+                                                         np.eye(3), 
+                                                         k_for_fisheye, 
+                                                         self.intrinsic_calibration_for_anipose['size'], 
+                                                         cv2.CV_16SC2)
+        return cv2.remap(image, map1, map2, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)  
+
         
         
         
