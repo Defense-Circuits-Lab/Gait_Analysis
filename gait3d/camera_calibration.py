@@ -249,7 +249,7 @@ class TestPositionsGroundTruth:
             
     
     def add_marker_ids_and_distance_id_as_reference_distance(self, marker_ids: Tuple[str, str], distance_id: str) -> None:
-        self.reference_distance_ids_with_corresponding_marker_ids.append((distance_id, marker_ids[0], marker_ids[1])) 
+        self.reference_distance_ids_with_corresponding_marker_ids.append((distance_id, marker_ids)) 
     
     
     def add_marker_ids_to_be_connected_in_3d_plots(self, marker_ids: Tuple[str]) -> None:
@@ -377,8 +377,25 @@ class SingleCamDataForAnipose:
             calibrator.save()
         adjusting_required = self._is_adjusting_of_intrinsic_calibration_required(unadjusted_intrinsic_calibration = intrinsic_calibration)
         self._set_intrinsic_calibration(intrinsic_calibration = intrinsic_calibration, adjusting_required = adjusting_required)
-
-                
+        
+        
+    def validate_and_save_manual_marker_coords_as_fake_dlc_output(self, test_positions_gt: TestPositionsGroundTruth, output_filepath: Optional[Path]=None,
+                                                                  add_missing_marker_ids_with_0_likelihood: bool=True) -> None:
+        if type(output_filepath) != Path:
+            output_filepath = self.filepath_synchronized_calibration_video.parent
+        if output_filepath.name.endswith('.h5') == False:
+            if output_filepath.is_dir():
+                output_filepath = output_filepath.joinpath(f'{self.cam_id}_manual_test_position_marker_fake.h5')
+            else:
+                output_filepath = output_filepath.parent.joinpath(f'{self.cam_id}_manual_test_position_marker_fake.h5')
+        self.test_position_markers_df = self._construct_dlc_output_style_df_from_manual_marker_coords()
+        self.validate_test_position_marker_ids(test_positions_gt = test_positions_gt, add_missing_marker_ids_with_0_likelihood = add_missing_marker_ids_with_0_likelihood)
+        self.test_position_markers_df.to_hdf(output_filepath, "df")
+        print(f'Your dataframe was successfully saved at: {output_filepath.as_posix()}.')
+        self.load_test_position_markers_df_from_dlc_prediction(filepath_deeplabcut_prediction = output_filepath)
+        print('Your "fake DLC marker perdictions" were successfully loaded to the SingleCamDataForAnipose object!')
+            
+            
     def save_manual_marker_coords_as_fake_dlc_output(self, output_filepath: Optional[Path]=None):
         # ToDo: this could very well be suitable to become extracted to a utils function
         #       it could then easily be re-used as "validate_output_filename_and_path"
@@ -477,8 +494,9 @@ class SingleCamDataForAnipose:
     
     
     def _get_anipose_calibration_video_size(self) -> Tuple[int, int]:
-        video_reader = iio.get_reader(self.filepath_synchronized_calibration_video)
-        return video_reader.get_meta_data()['size']
+        reader = iio.get_reader(self.filepath_synchronized_calibration_video)
+        frame = reader.get_data(0)
+        return frame.shape[1], frame.shape[0] 
     
     
     def _get_correct_x_y_offsets(self, intrinsic_calibration_video_size: Tuple[int, int], new_video_size: Tuple[int, int]) -> Tuple[int, int]:
@@ -573,18 +591,22 @@ class CalibrationForAnipose3DTracking:
         return 0.5
         
     def evaluate_triangulation_of_test_position_markers(self, test_positions_gt: TestPositionsGroundTruth, show_3D_plot: bool=True, verbose: bool=True) -> None:
-        anipose_io = self._preprocess_dlc_predictions_for_anipose()
-        anipose_io['p3ds_flat'] = self.camera_group.triangulate(anipose_io['points_flat'], progress=True)
-        anipose_io = self._postprocess_triangulations_and_calculate_reprojection_error(anipose_io = anipose_io)
-        anipose_io = self._add_dataframe_of_triangulated_points(anipose_io = anipose_io)
-        anipose_io = self._add_reprojection_errors_of_all_test_position_markers(anipose_io = anipose_io)
-        anipose_io = self._add_all_real_distances_errors(anipose_io = anipose_io, test_positions_gt = test_positions_gt)
+        self.anipose_io = self._preprocess_dlc_predictions_for_anipose()
+        self.anipose_io['p3ds_flat'] = self.camera_group.triangulate(self.anipose_io['points_flat'], progress=True)
+        self.anipose_io = self._postprocess_triangulations_and_calculate_reprojection_error(anipose_io = self.anipose_io)
+        self.anipose_io = self._add_dataframe_of_triangulated_points(anipose_io = self.anipose_io)
+        self.anipose_io = self._add_reprojection_errors_of_all_test_position_markers(anipose_io = self.anipose_io)
+        self.anipose_io = self._add_all_real_distances_errors(anipose_io = self.anipose_io, test_positions_gt = test_positions_gt)
         if verbose:
-            print(f'Mean reprojection error: {anipose_triangulation_io["reproj_nonan"].mean()}')
-            for reference_distance_id, distance_errors in anipose_io['distance_errors_in_cm'].items():
+            print(f'Mean reprojection error: {self.anipose_io["reproj_nonan"].mean()}')
+            for reference_distance_id, distance_errors in self.anipose_io['distance_errors_in_cm'].items():
                 print(f'Using {reference_distance_id} as reference distance, the mean distance error is: {distance_errors["mean_error"]} cm.')
         if show_3D_plot:
-            self._show_3D_plot(frame_idx = 0, anipose_io = anipose_io, marker_ids_to_connect = test_positions_gt.marker_ids_to_connect_in_3D_plot)
+            self._show_3D_plot(frame_idx = 0, anipose_io = self.anipose_io, marker_ids_to_connect = test_positions_gt.marker_ids_to_connect_in_3D_plot)
+            
+            
+    def load_calibration(self, filepath: Path) -> None:
+        self.camera_group = ap_lib.cameras.CameraGroup.load(filepath)
 
 
     def run_calibration(self, use_own_intrinsic_calibration: bool=True, charuco_calibration_board: Optional[ap_lib.boards.CharucoBoard]=None) -> None:
@@ -592,7 +614,7 @@ class CalibrationForAnipose3DTracking:
         # possibility to add verbose=False in calibrate_videos() call to avoid lengthy output?
         # confirm type hinting 
         if charuco_calibration_board == None:
-            aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)
+            aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_6X6_250)
             charuco_calibration_board = ap_lib.boards.CharucoBoard(7, 5, square_length=1, marker_length=0.8, marker_bits=6, aruco_dict=aruco_dict)
         self.camera_group.calibrate_videos(videos = self.calibration_video_filepaths, 
                                            board = charuco_calibration_board,
@@ -653,7 +675,7 @@ class CalibrationForAnipose3DTracking:
         for i in range(3):
             df['center_{}'.format(i)] = center[i]
         df['fnum'] = np.arange(n_frames)
-        anipose_io['df_xzy'] = df
+        anipose_io['df_xyz'] = df
         return anipose_io
 
 
@@ -683,7 +705,7 @@ class CalibrationForAnipose3DTracking:
         for key in anipose_io['df_xyz'].iloc[0].keys():
             if "error" in key:
                 reprojection_error = anipose_io['df_xyz'][key].iloc[0]
-                marker_id = key[:'_error']
+                marker_id = key[:key.find('_error')]
                 anipose_io['reprojection_errors_test_position_markers'][marker_id] = reprojection_error # since we only have a single image
                 if type(reprojection_error) != np.nan: 
                     # ToDo:
@@ -707,7 +729,7 @@ class CalibrationForAnipose3DTracking:
         return marker_ids_with_distance_error
     
     
-    def _connect_all_marker_ids(ax: plt.Figure, points: np.ndarray, scheme: List[Tuple[str]], bodyparts: List[str]) -> List[plt.Figure]:
+    def _connect_all_marker_ids(self, ax: plt.Figure, points: np.ndarray, scheme: List[Tuple[str]], bodyparts: List[str]) -> List[plt.Figure]:
         # ToDo: correct type hints
         cmap = plt.get_cmap('tab10')
         bp_dict = dict(zip(bodyparts, range(len(bodyparts))))
@@ -724,8 +746,8 @@ class CalibrationForAnipose3DTracking:
         return ax.plot(points[ixs, 0], points[ixs, 1], points[ixs, 2], color=color)        
 
 
-    def _convert_all_xyz_distances(anipose_io: pd.DataFrame, conversion_factor: float) -> Dict:
-        marker_id_combinations = it.combinations(anipose_io['bodyparts'])
+    def _convert_all_xyz_distances(self, anipose_io: Dict, conversion_factor: float) -> Dict:
+        marker_id_combinations = it.combinations(anipose_io['bodyparts'], 2)
         all_distances_in_cm = {}
         for marker_id_a, marker_id_b in marker_id_combinations:
             if marker_id_a not in all_distances_in_cm.keys():
@@ -736,11 +758,11 @@ class CalibrationForAnipose3DTracking:
     
     
     def _get_all_calibration_video_filepaths(self) -> None:
-        video_filpaths = [single_cam.filepath_synchronized_calibration_video for single_cam in self.single_cam_objects]
+        video_filepaths = [[single_cam.filepath_synchronized_calibration_video.as_posix()] for single_cam in self.single_cam_objects]
         setattr(self, 'calibration_video_filepaths', video_filepaths)
         
                                                                                                       
-    def _get_conversion_factors_from_different_references(anipose_io: Dict, test_positions_gt: TestPositionsGroundTruth) -> Dict: # Tuple? List?
+    def _get_conversion_factors_from_different_references(self, anipose_io: Dict, test_positions_gt: TestPositionsGroundTruth) -> Dict: # Tuple? List?
         all_conversion_factors = {}
         for reference_distance_id, reference_marker_ids in test_positions_gt.reference_distance_ids_with_corresponding_marker_ids:
             distance_in_cm = test_positions_gt.marker_ids_with_distances[reference_marker_ids[0]][reference_marker_ids[1]]
@@ -751,14 +773,14 @@ class CalibrationForAnipose3DTracking:
         return all_conversion_factors
     
 
-    def _get_xyz_distance_in_triangulation_space(marker_ids: Tuple[str, str], df_xyz: pd.DataFrame) -> float:
+    def _get_xyz_distance_in_triangulation_space(self, marker_ids: Tuple[str, str], df_xyz: pd.DataFrame) -> float:
         squared_differences = [(df_xyz[f'{marker_ids[0]}_{axis}'] - df_xyz[f'{marker_ids[1]}_{axis}'])**2 for axis in ['x', 'y', 'z']]
         return sum(squared_differences)**0.5
 
     
-    def _get_xyz_to_cm_conversion_factor(reference_marker_ids: Tuple[str, str], distance_in_cm: Union[int, float], df_xyz: pd.DataFrame) -> float:
+    def _get_xyz_to_cm_conversion_factor(self, reference_marker_ids: Tuple[str, str], distance_in_cm: Union[int, float], df_xyz: pd.DataFrame) -> float:
         distance_in_triangulation_space = self._get_xyz_distance_in_triangulation_space(marker_ids = reference_marker_ids, df_xyz = df_xyz)
-        return distance_in_cm / distance_in_triangulation_space   
+        return distance_in_triangulation_space / distance_in_cm   
     
 
     def _initialize_camera_group(self) -> None:
@@ -796,7 +818,7 @@ class CalibrationForAnipose3DTracking:
 
     def _validate_test_position_markers_df_is_loaded_to_all_single_cam_objects(self, single_cams_to_calibrate: List[SingleCamDataForAnipose]):
         # ToDo: call validation on single_cam object (potentially again), to ensure it was done?
-        for single_cam in self.single_cam_objects:
+        for single_cam in single_cams_to_calibrate:
             if hasattr(single_cam, 'test_position_markers_df') == False:
                 raise ValueError('For this evaluation, all SingleCamDataForAnipose objects must have '
                                  'loaded the predicted coordinates of the test position marker ids. '
