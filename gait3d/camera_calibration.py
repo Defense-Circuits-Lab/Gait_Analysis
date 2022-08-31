@@ -334,9 +334,6 @@ class SingleCamDataForAnipose:
 
     def export_as_aniposelib_Camera_object(self) -> ap_lib.cameras.Camera:
         camera = ap_lib.cameras.Camera(name = self.cam_id,
-                                       size = self.intrinsic_calibration_for_anipose['size'],
-                                       rvec = self.intrinsic_calibration_for_anipose['rvec'], # ToDo: remove, as it is an extrinsic parameter
-                                       tvec = self.intrinsic_calibration_for_anipose['tvec'], # ToDo: remove, as it is an extrinsic parameter
                                        matrix = self.intrinsic_calibration_for_anipose['K'],
                                        dist = self.intrinsic_calibration_for_anipose['D'],
                                        extra_dist = False)
