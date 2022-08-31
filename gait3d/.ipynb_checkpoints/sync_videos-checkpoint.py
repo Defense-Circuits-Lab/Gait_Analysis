@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import imageio as iio
 import ffmpeg
+
 import cupy as cp
 
 import sys
@@ -14,8 +15,8 @@ sys.path.append('/home/ds/GitHub_repos/rapidAligner/')
 import rapidAligner as ra
 
 
-# ToDo: some utility functions, like plotting the first frame of a video to check (& maybe adjust?) LED center coords
-# ToDo: install rapidAligner from GitHub Repo as package to make import more convenient
+# ToDo: install rapidAligner from GitHub Repo as package to make import more convenient / compatible across systems
+# ToDo: function to automatically delete video parts ("delete_individual_parts" default to True)
 
 
 class TimeseriesTemplate(ABC):
@@ -98,12 +99,23 @@ class SingleCamRawCalibrationData:
     # ToDo: function to join individual .mp4 parts together?
     # ToDo: CPU-based alternative to rapid_Aligner?
     
-    def __init__(self, filepath_video: Path, filepath_tracking: Path, led_marker_id: str, box_rows: int=5, box_cols: int=5) -> None:
+    def __init__(self, filepath_video: Path, cam_id: str) -> None:
         self.filepath_video = filepath_video
-        self.filepath_tracking = filepath_tracking
-        self.led_marker_id = led_marker_id
+        self.cam_id = cam_id
         self.fps = self._load_fps_from_video_metadata()
-        self.led_center_pixel_coords = self._get_led_center_pixel_coords()
+
+        
+    def extract_led_pixel_intensities_as_timeseries(self, filepath_tracking: Optional[Path]=None, led_marker_id: Optional[str]=None,
+                                                    led_center_row_col_idxs: Optional[Tuple[int, int]]=None, box_rows: int=5, box_cols: int=5) -> None:
+        if (filepath_tracking == None) & (led_marker_id == None) & (led_center_row_col_idxs == None):
+            raise ValueError('You have to provide either the "filepath_tracking" (i.e. the filepath '
+                             'of the DeepLabCut prediction) and the "led_marker_id", OR you can pass '
+                             'the x- and y-coordinates of the LEDs center directly as "led_center_row_col_idxs"'
+                             ' (for instance if they were determined manually).')
+        if led_center_row_col_idxs != None:
+            self.led_center_row_col_idxs = led_center_row_col_idxs
+        else:    
+            self.led_center_row_col_idxs = self._get_led_coords_from_dlc_tracking(filepath = filepath_tracking, marker_id = led_marker_id)
         self.led_timeseries = self._extract_led_pixel_intensities(box_rows = box_rows, box_cols = box_cols)
         
         
@@ -114,13 +126,14 @@ class SingleCamRawCalibrationData:
         return int(fps)
         
     
-    def _get_led_center_pixel_coords(self) -> Tuple[int, int]:
+    def _get_led_coords_from_dlc_tracking(self, filepath: Path, marker_id: str) -> Tuple[int, int]:
+        # ToDo:
         # load dlc output file
         # go over all predicted led marker positions
         # calculate median position from those with highest prediction probabilities
         # and confirm that they don´t include large shifts (e.g. very low z-scores only)
-        # return format has to be (row_index, column_index)
-        # for now, this will solely return the manually determined coords:
+        # return format has to be (row_index, column_index)!!!!
+        # for now, we will store all manually determined LED center coords here:
         """
         Calibration 11.08:
         coords = {'top': (249, 433),
@@ -128,7 +141,7 @@ class SingleCamRawCalibrationData:
                   'bottom_b': (536, 561),
                   'side1': (299, 560),
                   'side2': (293, 304)}
-        """
+                  
         # calibration 18.08:
         coords = {'bottom_crop': (503, 670),
                   'bottom_nocrop': (823, 834),
@@ -138,14 +151,20 @@ class SingleCamRawCalibrationData:
                   'Side2_nocrop': (425, 751),
                   'top_crop': (336, 537),
                   'top_nocrop': (336, 537)}
-        
-        return coords[self.led_marker_id]
+        coords = {'bottom': (474, 556),
+                  'Side1': (218, 430),
+                  'Side2': (227, 331),
+                  'Ground1': (429, 378),
+                  'Ground2': (300, 418),
+                  'top': (270, 500)}
+        """
+        pass
     
     
     def _extract_led_pixel_intensities(self, box_rows: int, box_cols: int) ->np.ndarray:
-        box_row_indices = self._get_start_end_indices_from_center_coord_and_length(center_px = self.led_center_pixel_coords[0],
+        box_row_indices = self._get_start_end_indices_from_center_coord_and_length(center_px = self.led_center_row_col_idxs[0],
                                                                                        length = box_rows)
-        box_col_indices = self._get_start_end_indices_from_center_coord_and_length(center_px = self.led_center_pixel_coords[1],
+        box_col_indices = self._get_start_end_indices_from_center_coord_and_length(center_px = self.led_center_row_col_idxs[1],
                                                                                        length = box_cols)
         mean_pixel_intensities = []
         for frame in iio.v3.imiter(self.filepath_video):
@@ -215,7 +234,7 @@ class SingleCamRawCalibrationData:
     
     def _plot_best_alignment_result(self, template: np.ndarray, start_idx: int) -> None:
         end_idx = start_idx + template.shape[0]
-        fig = plt.figure(figsize=(15, 10), facecolor='white')
+        fig = plt.figure(figsize=(9, 6), facecolor='white')
         gs = fig.add_gridspec(2, 1)
         ax_raw = fig.add_subplot(gs[0,0])
         ax_raw.plot(self.led_timeseries[start_idx:end_idx])
@@ -320,25 +339,24 @@ class SingleCamRawCalibrationData:
                 selected_frames.append(frame)
         video_array = np.asarray(selected_frames)
         if part_id == None:
-            filepath_out = self.filepath_video.parent.joinpath(f'{self.led_marker_id}_cam_synchronized_for_calibration.mp4')
+            filepath_out = self.filepath_video.parent.joinpath(f'{self.cam_id}_cam_synchronized_for_calibration.mp4')
         else:
-            filepath_out = self.filepath_video.parent.joinpath(f'{self.led_marker_id}_cam_synchronized_for_calibration_part_{part_id}.mp4')
+            filepath_out = self.filepath_video.parent.joinpath(f'{self.cam_id}_cam_synchronized_for_calibration_part_{part_id}.mp4')
         print('writing video to disk')
         iio.mimwrite(filepath_out, video_array, fps=target_fps)
         print('done!')
 
 
     def _concatenate_individual_video_parts_on_disk(self) -> None:
-        camera_id = self.led_marker_id
         io_directory_path = self.filepath_video.parent
-        filenames_video_parts = [filename for filename in self._listdir_nohidden(io_directory_path) if filename.startswith(camera_id)]
+        filenames_video_parts = [filename for filename in self._listdir_nohidden(io_directory_path) if filename.startswith(self.cam_id)]
         video_part_streams = [ffmpeg.input(io_directory_path.joinpath(filename)) for filename in filenames_video_parts]
         if len(video_part_streams) >= 2:
             concatenated_video = ffmpeg.concat(video_part_streams[0], video_part_streams[1])
             if len(video_part_streams) >= 3:
                 for part_stream in video_part_streams[2:]:
                     concatenated_video = ffmpeg.concat(concatenated_video, part_stream)
-        output_stream = ffmpeg.output(concatenated_video, filename=io_directory_path.joinpath(f'{camera_id}_cam_synchronized_for_calibration_all_parts.mp4'))
+        output_stream = ffmpeg.output(concatenated_video, filename=io_directory_path.joinpath(f'{self.cam_id}_cam_synchronized_for_calibration_all_parts.mp4'))
         output_stream.run(overwrite_output = True)
 
         
