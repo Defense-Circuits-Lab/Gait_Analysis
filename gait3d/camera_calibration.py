@@ -332,11 +332,17 @@ class SingleCamDataForAnipose:
         self.manual_test_position_marker_coords_pred[marker_id] = {'x': [x_or_column_idx], 'y': [y_or_row_idx], 'likelihood': [likelihood]}
 
 
-    def export_as_aniposelib_Camera_object(self) -> ap_lib.cameras.Camera:
-        camera = ap_lib.cameras.Camera(name = self.cam_id,
-                                       matrix = self.intrinsic_calibration_for_anipose['K'],
-                                       dist = self.intrinsic_calibration_for_anipose['D'],
-                                       extra_dist = False)
+    def export_as_aniposelib_Camera_object(self, fisheye: bool) -> ap_lib.cameras.Camera:
+        if fisheye:
+            camera = ap_lib.cameras.FisheyeCamera(name = self.cam_id,
+                                           matrix = self.intrinsic_calibration_for_anipose['K'],
+                                           dist = self.intrinsic_calibration_for_anipose['D'],
+                                           extra_dist = False)
+        else:                                   
+            camera = ap_lib.cameras.Camera(name = self.cam_id,
+                                   matrix = self.intrinsic_calibration_for_anipose['K'],
+                                   dist = self.intrinsic_calibration_for_anipose['D'],
+                                   extra_dist = False)
         return camera
     
     
@@ -781,7 +787,7 @@ class CalibrationForAnipose3DTracking:
     
 
     def _initialize_camera_group(self) -> None:
-        all_Camera_objects = [single_cam.export_as_aniposelib_Camera_object() for single_cam in self.single_cam_objects]
+        all_Camera_objects = [single_cam.export_as_aniposelib_Camera_object(single_cam.fisheye) for single_cam in self.single_cam_objects]
         setattr(self, 'camera_group', ap_lib.cameras.CameraGroup(all_Camera_objects))
     
 
