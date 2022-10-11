@@ -1007,12 +1007,12 @@ class Recording2D(ABC):
             filepath(pathlib.Path): the filepath to the h5 containing DLC data
             recorded_framerate(int): fps of the recording
         """
-        self.full_df_from_hdf = self._get_df_from_hdf(filepath = filepath)
+        self.full_df_from_hdf = self._get_df_from_csv(filepath = filepath)
         self.recorded_framerate = recorded_framerate
         self.metadata = self._retrieve_metadata(filepath = filepath)
         
         
-    def _get_df_from_hdf(self, filepath: Path)->pd.DataFrame:
+    def _get_df_from_csv(self, filepath: Path)->pd.DataFrame:
         """
         Reads the Dataframe from the h5-file and drops irrelevant columns and rows.
         
@@ -1021,9 +1021,9 @@ class Recording2D(ABC):
         Returns:
             pandas.DataFrame: the Dataframe containing all bodyparts with x, y-coordinates and likelihood as returned by DLC
         """
-        if not filepath.endswith('.h5'):
-            raise ValueError('The Path you specified is not linking to a .h5-file!')
-        df = pd.read_hdf(filepath)
+        if not filepath.endswith('.csv'):
+            raise ValueError('The Path you specified is not linking to a .csv-file!')
+        df = pd.read_csv(filepath)
         df = df.drop('scorer', axis=1)
         df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
         df = df.drop([0, 1], axis=0)
