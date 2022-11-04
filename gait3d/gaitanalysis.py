@@ -350,9 +350,8 @@ class Recording3D(ABC):
         This is set as a parameter (in the future: Parameter object) self.facing_towards_open_end with Boolean values.
         """
         self.facing_towards_open_end = self._initialize_new_parameter(dtype=bool)
-        self.facing_towards_open_end.loc[(self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarLeft'].df.loc[:, 'x']) &
-                                    (self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarRight'].df.loc[:, 'x'])] = True
-        # Use TailBase instead of ears? The close distance between Snout and ears leads to very much turns!
+        self.facing_towards_open_end.loc[(self.bodyparts['Front'].df.loc[:, 'x']>self.bodyparts['Back'].df.loc[:, 'x']) &
+                                    (self.bodyparts['Front'].df.loc[:, 'x']>self.bodyparts['Back'].df.loc[:, 'x'])] = True
         
         
     def _get_turns(self)->None:
@@ -507,15 +506,15 @@ class Recording3D(ABC):
         Parameters:
             gait_events(List): nested list with sublists that represent single gait events containing single step indices
         """
-        self.turns_to_closed_after_gait = [turn for turn in [self._bout_after_gait_event(step = gait_event[-1], event = self.turns_to_closed) for gait_event in gait_events] if type(turn)==EventBout]
-        self.turns_to_open_after_gait = [turn for turn in [self._bout_after_gait_event(step = gait_event[-1], event = self.turns_to_open) for gait_event in gait_events] if type(turn)==EventBout]
-        self.gait_disruption_bouts = [disruption for disruption in [self._bout_after_gait_event(step = gait_event[-1], event = self.immobility_bouts) for gait_event in gait_events] if type(disruption)==EventBout]
-        self.freezing_of_gait_events = [freezing for freezing in [self._bout_after_gait_event(step = gait_event[-1], event = self.freezing_bouts) for gait_event in gait_events] if type(freezing)==EventBout]
+        self.turns_to_closed_after_gait = [turn for turn in [self._bout_after_gait_event(gait_event = gait_event, event = self.turns_to_closed) for gait_event in gait_events] if type(turn)==EventBout]
+        self.turns_to_open_after_gait = [turn for turn in [self._bout_after_gait_event(gait_event = gait_event, event = self.turns_to_open) for gait_event in gait_events] if type(turn)==EventBout]
+        self.gait_disruption_bouts = [disruption for disruption in [self._bout_after_gait_event(gait_event = gait_event, event = self.immobility_bouts) for gait_event in gait_events] if type(disruption)==EventBout]
+        self.freezing_of_gait_events = [freezing for freezing in [self._bout_after_gait_event(gait_event = gait_event, event = self.freezing_bouts) for gait_event in gait_events] if type(freezing)==EventBout]
 
             
-    def _bout_after_gait_event(self, step: 'Step', event: List)->Union:
+    def _bout_after_gait_event(self, gait_event: List, event: List)->Union:
         """
-        Function that checks the second after a gait_event for an specified event.
+        Function that checks the in and after a gait_event for an specified event.
         
         Parameters:
             frame_index(int): last index of a gait_event
@@ -523,8 +522,8 @@ class Recording3D(ABC):
         Returns:
             Union: the Eventbout is returned if found, otherwise None
         """
-        for bout in event:#checks for event after the start_index of the last step of a gait event -> should also be checked during the whole gait periode!!!
-            if bout.start_index in range(step.start_index, step.start_index+self.recorded_framerate):
+        for bout in event:
+            if bout.start_index in range(gait_event[0].start_index, gait_event[-1].start_index+self.recorded_framerate):
                 return bout
                 break
             else:
@@ -743,7 +742,6 @@ class Bodypart():
         """
         Function that calculates Speed and Immobility.
         """
-        self._exclude_frames()
         self._get_speed(recorded_framerate = recorded_framerate)
         self._get_rolling_speed()
         self._get_immobility()
@@ -789,7 +787,7 @@ class Bodypart():
     @property
     def immobility_threshold(self) -> float:
         """ Arbitrary chosen threshold in cm per s for defining immobility."""
-        return 3.
+        return 1.
     
     def _get_immobility(self)->None:
         """
@@ -993,7 +991,7 @@ class Recording2D(ABC):
     Class for Analysing 2D-Position Data of mice in the OpeningTrack.
     
     Attributes:
-        full_df_from_h5(pandas.DataFrame): the Dataframe containing all bodyparts with x, y-coordinates and likelihood as returned by DLC
+        full_df_from_file(pandas.DataFrame): the Dataframe containing all bodyparts with x, y-coordinates and likelihood as returned by DLC
         recorded_framerate(int): fps of the recording
         metadata(Dict): dictionary containing information read from the filename, such as animal_id, recording_date and Opening Track paradigm
     """
@@ -1007,12 +1005,12 @@ class Recording2D(ABC):
             filepath(pathlib.Path): the filepath to the h5 containing DLC data
             recorded_framerate(int): fps of the recording
         """
-        self.full_df_from_hdf = self._get_df_from_csv(filepath = filepath)
+        self.full_df_from_file = self._get_df_from_file(filepath = filepath)
         self.recorded_framerate = recorded_framerate
         self.metadata = self._retrieve_metadata(filepath = filepath)
         
         
-    def _get_df_from_csv(self, filepath: Path)->pd.DataFrame:
+    def _get_df_from_file(self, filepath: Path)->pd.DataFrame:
         """
         Reads the Dataframe from the h5-file and drops irrelevant columns and rows.
         
@@ -1021,15 +1019,24 @@ class Recording2D(ABC):
         Returns:
             pandas.DataFrame: the Dataframe containing all bodyparts with x, y-coordinates and likelihood as returned by DLC
         """
-        if not filepath.endswith('.csv'):
-            raise ValueError('The Path you specified is not linking to a .csv-file!')
-        df = pd.read_csv(filepath)
-        df = df.drop('scorer', axis=1)
-        df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
-        df = df.drop([0, 1], axis=0)
-        df = df.reset_index()
-        df = df.drop('index', axis=1)
-        df = df.astype(float)
+        if filepath.endswith('.csv'):
+            df = pd.read_csv(filepath)
+            df = df.drop('scorer', axis=1)
+            df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
+            df = df.drop([0, 1], axis=0)
+            df = df.reset_index()
+            df = df.drop('index', axis=1)
+            df = df.astype(float)
+        elif filepath.endswith('.h5'):
+            df = pd.read_hdf(filepath)
+            df = df.drop('scorer', axis=1)
+            df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
+            df = df.drop([0, 1], axis=0)
+            df = df.reset_index()
+            df = df.drop('index', axis=1)
+            df = df.astype(float)
+        else:
+            raise ValueError('The Path you specified is not linking to a .csv/.h5-file!')
         return df
     
     
@@ -1064,6 +1071,7 @@ class Recording2D(ABC):
             video_filepath: path to the recorded video
         """
         self._calculate_center_of_gravity()
+        self._create_freezing_body_regions()
         K, D = self._load_intrinsic_camera_calibration(intrinsic_camera_calibration_filepath = intrinsic_camera_calibration_filepath, x_offset=xy_offset[0], y_offset=xy_offset[1])
         image = iio.imread(video_filepath, index = 0)
         size = image.shape[1], image.shape[0]
@@ -1078,12 +1086,18 @@ class Recording2D(ABC):
         Function, that calculates the centerofgravity.
         
         The center_of_gravity is calculated using the bodyparts Snout and TailBase. The likelihood is calculated as the multiplied likelihood of Snout and TailBase.
-        It adds centerofgravity to self.full_df_from_h5.
+        It adds centerofgravity to self.full_df_from_file.
         """
-        for coordinate in ['x', 'y']:
-            self.full_df_from_hdf[f'centerofgravity_{coordinate}'] = (self.full_df_from_hdf[f'Snout_{coordinate}'] + self.full_df_from_hdf[f'TailBase_{coordinate}'])/2
-        self.full_df_from_hdf['centerofgravity_likelihood'] = self.full_df_from_hdf['Snout_likelihood']*self.full_df_from_hdf['TailBase_likelihood']
+        self._calculate_new_bodypart(['Snout', 'TailBase'], 'centerofgravity')
             
+    def _create_freezing_body_regions(self)->None:
+        self._calculate_new_bodypart(['Snout', 'ForePawRight', 'ForePawLeft'], 'Front')
+        self._calculate_new_bodypart(['TailBase', 'HindPawRight', 'HindPawLeft'], 'Back')
+        
+    def _calculate_new_bodypart(self, bodyparts: List[str], label: str)->None:
+        for coordinate in ['x', 'y']:
+            self.full_df_from_file[f'{label}_{coordinate}'] = (sum([self.full_df_from_file[f'{bp}_{coordinate}'] for bp in bodyparts]))/len(bodyparts)
+        self.full_df_from_file[f'{label}_likelihood'] = np.prod([self.full_df_from_file[f'{bp}_likelihood'] for bp in bodyparts], axis = 0) 
         
     def _create_all_bodyparts(self)->None:
         """
@@ -1093,10 +1107,10 @@ class Recording2D(ABC):
         It sets the dictionary as self.bodyparts.
         """
         self.bodyparts = {}
-        for key in self.full_df_from_hdf.keys():
+        for key in self.full_df_from_file.keys():
             bodypart = key.split('_')[0]
             if bodypart not in self.bodyparts.keys():
-                self.bodyparts[bodypart] = Bodypart2D(bodypart_id = bodypart, df = self.full_df_from_hdf, camera_parameters_for_undistortion=self.camera_parameters_for_undistortion)
+                self.bodyparts[bodypart] = Bodypart2D(bodypart_id = bodypart, df = self.full_df_from_file, camera_parameters_for_undistortion=self.camera_parameters_for_undistortion)
                 
     
     def _normalize_coordinate_system(self)->None:
@@ -1130,7 +1144,7 @@ class Recording2D(ABC):
                             self.bodyparts['MazeCornerOpenLeft'].df_raw['likelihood'][frame]+
                             self.bodyparts['MazeCornerClosedRight'].df_raw['likelihood'][frame]+
                             self.bodyparts['MazeCornerClosedLeft'].df_raw['likelihood'][frame])/4
-                        for frame in range(self.full_df_from_hdf.shape[0])]
+                        for frame in range(self.full_df_from_file.shape[0])]
         best_matching_frame = frame_likelihood.index(max(frame_likelihood))
         return best_matching_frame
     
@@ -1144,7 +1158,7 @@ class Recording2D(ABC):
         Returns:
             conversion_factor(float): factor to convert the unspecified unit into cm.
         """
-        conversion_factor = (50/np.sqrt(sum((reference_points[1]-reference_points[0])**2)))
+        conversion_factor = 50/np.sqrt(sum((reference_points[1]-reference_points[0])**2))
         return conversion_factor
     
     def _get_translation_vector(self, reference_points:  Tuple[np.array, np.array])->float:
@@ -1212,7 +1226,7 @@ class Recording2D(ABC):
         mazecornerclosedright = np.array([self.bodyparts['MazeCornerClosedRight'].df_undistort.loc[frame, 'x'], self.bodyparts['MazeCornerClosedRight'].df_undistort.loc[frame, 'y']])
         mazecorneropenleft = np.array([self.bodyparts['MazeCornerOpenLeft'].df_undistort.loc[frame, 'x'], self.bodyparts['MazeCornerOpenLeft'].df_undistort.loc[frame, 'y']])
         mazecornerclosedleft = np.array([self.bodyparts['MazeCornerClosedLeft'].df_undistort.loc[frame, 'x'], self.bodyparts['MazeCornerClosedLeft'].df_undistort.loc[frame, 'y']])
-        return mazecornerclosedright, mazecorneropenright
+        return mazecornerclosedright, mazecorneropenright, mazecorneropenleft
                 
         
     def _run_basic_operations_on_bodyparts(self)->None:
@@ -1289,7 +1303,7 @@ class Recording2D(ABC):
         Returns:
             pd.Series of an array in shape of n_frames with default values set to 0 (if dtype bool->False)
         """
-        return pd.Series(np.zeros_like(np.arange(self.full_df_from_hdf.shape[0]), dtype = dtype))
+        return pd.Series(np.zeros_like(np.arange(self.full_df_from_file.shape[0]), dtype = dtype))
     
                     
     def _check_immobility_of_all_freezing_bodyparts(self)->None:    
@@ -1299,7 +1313,7 @@ class Recording2D(ABC):
         The information is stored as attribute self.all_freezing_bodyparts_immobile.
         """
         self.all_freezing_bodyparts_immobile = self._initialize_new_parameter(dtype=bool)
-        self.all_freezing_bodyparts_immobile.loc[(self.bodyparts['Snout'].df.loc[:, 'immobility']) & (self.bodyparts['TailBase'].df.loc[:, 'immobility'])] = True
+        self.all_freezing_bodyparts_immobile.loc[(self.bodyparts['Front'].df.loc[:, 'immobility']) & (self.bodyparts['Back'].df.loc[:, 'immobility'])] = True
         
         
     def _get_immobility_bouts(self)->None:
@@ -1378,28 +1392,31 @@ class Recording2D(ABC):
         """
         Function, that recognizes periodes of gait.
         
-        If more than 3 steps are done in less than 3 seconds, those steps are considered a gait_event.
+        If more than x steps are done in less than y seconds, those steps are considered a gait_event.
 
         Parameters:
             steps(List): list of steps with Step objects
         Returns:
             gait_events(List): nested list with sublists that represent single gait events containing single step indices
         """
+        
+        x = 3
+        y = 3
+        
         gait_events = []
         for i in range(len(steps)):
             if i == 0:
                 gait_event = []
             gait_event.append(steps[i])
             if i == len(steps)-1:
-                if len(gait_event)>3:
+                if len(gait_event)>x:
                     gait_events.append(gait_event)
-            elif (steps[i+1].start_index - steps[i].start_index) > 3*self.recorded_framerate:
-                # 3s, where the mouse didn't do a step
+            elif (steps[i+1].start_index - steps[i].start_index) > (y * self.recorded_framerate):
+                # y s, where the mouse didn't do a step
                 # create new gait event
-                if len(gait_event)>3:
+                if len(gait_event)>x:
                     gait_events.append(gait_event)
                 gait_event = []
-            # create EventBouts for Gait?
         return gait_events
     
     def _get_gait_event_bouts(self, gait_events: List)->None:
@@ -1415,13 +1432,13 @@ class Recording2D(ABC):
         Parameters:
             gait_events(List): nested list with sublists that represent single gait events containing single step indices
         """
-        self.turns_to_closed_after_gait = [turn for turn in [self._bout_after_gait_event(step = gait_event[-1], event = self.turns_to_closed) for gait_event in gait_events] if type(turn)==EventBout]
-        self.turns_to_open_after_gait = [turn for turn in [self._bout_after_gait_event(step = gait_event[-1], event = self.turns_to_open) for gait_event in gait_events] if type(turn)==EventBout]
-        self.gait_disruption_bouts = [disruption for disruption in [self._bout_after_gait_event(step = gait_event[-1], event = self.immobility_bouts) for gait_event in gait_events] if type(disruption)==EventBout]
-        self.freezing_of_gait_events = [freezing for freezing in [self._bout_after_gait_event(step = gait_event[-1], event = self.freezing_bouts) for gait_event in gait_events] if type(freezing)==EventBout]
+        self.turns_to_closed_after_gait = [turn for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.turns_to_closed) for gait_event in gait_events] for turn in sublist if type(turn)==EventBout2D]
+        self.turns_to_open_after_gait = [turn for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.turns_to_open) for gait_event in gait_events] for turn in sublist if type(turn)==EventBout2D]
+        self.gait_disruption_bouts = [disruption for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.immobility_bouts) for gait_event in gait_events] for disruption in sublist if type(disruption)==EventBout2D]
+        self.freezing_of_gait_events = [freezing for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.freezing_bouts) for gait_event in gait_events] for freezing in sublist if type(freezing)==EventBout2D]
 
             
-    def _bout_after_gait_event(self, step: 'Step', event: List)->Union:
+    def _bout_after_gait_event(self, gait_event: List, event: List)->List:
         """
         Function that checks the second after a gait_event for an specified event.
         
@@ -1431,12 +1448,11 @@ class Recording2D(ABC):
         Returns:
             Union: the Eventbout is returned if found, otherwise None
         """
+        bouts = []
         for bout in event:
-            if bout.start_index in range(step.start_index, step.start_index+self.recorded_framerate):
-                return bout
-                break
-            else:
-                pass
+            if bout.start_index in range(gait_event[0].start_index, gait_event[-1].start_index+self.recorded_framerate):
+                bouts.append(bout)
+        return bouts
         
         
     def _calculate_angles(self)->None:
@@ -1570,6 +1586,9 @@ class Bodypart2D():
         translated_df = self._translate_df(translation_vector=translation_vector)
         rotated_df = self._rotate_df(rotation_angle=rotation_angle, df=translated_df)
         self.df = self._convert_df_to_cm(conversion_factor=conversion_factor, df=rotated_df)
+        # to increase computations outcomment the two lines below
+        self._exclude_frames()
+        self._interpolate_low_likelihood_frames()
     
     
     def _identify_duplicates(self)->None:
@@ -1625,15 +1644,29 @@ class Bodypart2D():
         """
         Function that calculates Speed and Immobility.
         """
-        self._exclude_frames()
         self._get_speed(recorded_framerate = recorded_framerate)
         self._get_rolling_speed()
         self._get_immobility()
         
-    def _exclude_frames(self)->None:
-        # check for likelihood error or outliers based on position
-        pass
-    
+    def _exclude_frames(self) -> None:
+        if self.id == 'centerofgravity':
+            self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold**2, ('x', 'y')] = np.NaN
+        elif self.id in set(['Back', 'Front']):
+            self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold**3, ('x', 'y')] = np.NaN
+        else:
+            self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold, ('x', 'y')] = np.NaN
+            
+    def _interpolate_low_likelihood_frames(self) -> None:
+        #Data smoothening:
+        m = np.arange(0, self.df.shape[0])
+        x = np.nan_to_num(self.df['x'], copy=True)
+        spline = interpolate.UnivariateSpline(m, x, s=1)
+        self.df['x'] = spline(m)
+        y = np.nan_to_num(self.df['y'], copy=True)
+        spline = interpolate.UnivariateSpline(m, y, s=1)
+        self.df['y'] = spline(m)
+        print('interpolated', self.id)
+
     def check_tracking_stability(self, start_end_index: Optional[Tuple]=(0, None))->float:
         """
         Function, that calculates the percentage of frames, in which the marker was detected with high likelihood.
@@ -1671,7 +1704,7 @@ class Bodypart2D():
     @property
     def immobility_threshold(self) -> float:
         """ Arbitrary chosen threshold in cm per s for defining immobility."""
-        return 3.
+        return 1.
         #arbitrary chosen
     
     @property
@@ -1689,16 +1722,8 @@ class Bodypart2D():
     def _detect_steps(self)->None:
         """
         Function, that detects steps as peaks in the speed based on scipy find_peaks.
-        
-        Data Smoothening can be added, but due to high computation time, this option only exists as a comment.
         """
         speed = self.df["speed_cm_per_s"].copy()
-        #Data smoothening:
-        #x = np.arange(0, len(speed))
-        #speed = np.nan_to_num(speed, copy=True)
-        #spline = interpolate.UnivariateSpline(x, speed, s=1)
-        #speed = spline(x)
-
         peaks = find_peaks(speed, prominence=50)
         steps_per_paw = self._create_steps(steps=peaks[0])
         return steps_per_paw
@@ -1761,11 +1786,12 @@ class EventBout2D():
         else:
             self.end_index = start_index
         self._create_dict()
+        self.dict['start_index'] = start_index
 
     @property
     def freezing_threshold(self) -> float:
         """ Arbitrary chosen threshold in seconds to check for freezing."""
-        return 2.
+        return 1.
 
     def check_direction(self, facing_towards_open_end: pd.Series)->None:
         """ 
@@ -1789,6 +1815,7 @@ class EventBout2D():
         if self.duration > self.freezing_threshold:
             self.freezing_threshold_reached = True
         self.dict['freezing_threshold_reached']=self.freezing_threshold_reached
+        self.dict['duration_in_s'] = self.duration
 
     def get_position(self, centerofgravity: Bodypart2D)->None:
         """
