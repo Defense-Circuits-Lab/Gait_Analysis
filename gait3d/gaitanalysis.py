@@ -303,9 +303,8 @@ class Recording2D(ABC):
         This is set as a parameter (in the future: Parameter object) self.facing_towards_open_end with Boolean values.
         """
         self.facing_towards_open_end = self._initialize_new_parameter(dtype=bool)
-        self.facing_towards_open_end.loc[(self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarLeft'].df.loc[:, 'x']) &
-                                    (self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarRight'].df.loc[:, 'x'])] = True
-        
+        self.facing_towards_open_end.loc[(self.bodyparts['Front'].df.loc[:, 'x']>self.bodyparts['Back'].df.loc[:, 'x']) &
+                                    (self.bodyparts['Front'].df.loc[:, 'x']>self.bodyparts['Back'].df.loc[:, 'x'])] = True
         
     def _get_turns(self)->None:
         """
@@ -357,6 +356,7 @@ class Recording2D(ABC):
         changes_from_immobility_to_mobility = self.all_freezing_bodyparts_immobile.where(self.all_freezing_bodyparts_immobile.diff()==True).dropna()
         start_indices_of_immobility_bouts = changes_from_immobility_to_mobility[::2]
         end_indices_of_immobility_bouts = changes_from_immobility_to_mobility[1::2]
+        # list comprehension
         self.immobility_bouts = []
         for i in range(len(start_indices_of_immobility_bouts)):
             start_index, end_index = start_indices_of_immobility_bouts.index[i], end_indices_of_immobility_bouts.index[i]
@@ -481,7 +481,7 @@ class Recording2D(ABC):
         """
         bouts = []
         for bout in event:
-            if bout.start_index in range(gait_event[0].start_index, gait_event[-1].start_index+self.recorded_framerate):
+            if bout.start_index in range(gait_event[0].start_index, gait_event[-1].start_index + self.recorded_framerate):
                 bouts.append(bout)
         return bouts
         
@@ -506,11 +506,6 @@ class Recording2D(ABC):
 
     
     def _add_angles_to_steps(self, gait_events: List)->None:
-        #plt.close()
-        #for gait_event in gait_events:
-        #    fig = plt.figure()
-        #    plt.plot(self.angle_hindkneeleft.parameter_array[gait_event[0].start_index:gait_event[-1].start_index])
-        #    plt.show()
         pass
     
     def _calculate_parameters_for_gait_analysis(self)->None:
@@ -522,25 +517,11 @@ class Recording2D(ABC):
         self.hind_stance = self.hind_stance_right.parameter_array + self.hind_stance_left.parameter_array
         self.fore_stance = self.fore_stance_right.parameter_array + self.fore_stance_left.parameter_array
         
+        #Step Length
+        #Stride Length
         
-        """
-        self.area_hindpawright = abs(0.5 * (((self.bodyparts['HindPawRight'].df['x']-self.bodyparts['HindPawRightFifthFinger'].df['x'])*
-        (self.bodyparts['HindPawRightSecondFinger'].df['y']-self.bodyparts['HindPawRightFifthFinger'].df['y']))-
-        ((self.bodyparts['HindPawRightSecondFinger'].df['x']-self.bodyparts['HindPawRightFifthFinger'].df['x'])*
-        (self.bodyparts['HindPawRight'].df['y']-self.bodyparts['HindPawRightFifthFinger'].df['y']))))
+        #Gait Symmetry
         
-        self.area_hindpawleft = abs(0.5 * (((self.bodyparts['HindPawLeft'].df['x']-self.bodyparts['HindPawLeftFifthFinger'].df['x'])*
-        (self.bodyparts['HindPawLeftSecondFinger'].df['y']-self.bodyparts['HindPawLeftFifthFinger'].df['y']))-
-        ((self.bodyparts['HindPawLeftSecondFinger'].df['x']-self.bodyparts['HindPawLeftFifthFinger'].df['x'])*
-        (self.bodyparts['HindPawLeft'].df['y']-self.bodyparts['HindPawLeftFifthFinger'].df['y']))))
-        """
-        """
-        Step Length
-        Stride Length
-        
-        Gait Symmetry
-        """
-        pass
     
     def _create_PSTHs(self)->None:
         pass
@@ -649,14 +630,13 @@ class Bodypart2D():
         Returns:
             rotated_df(pandas.DataFrame): the rotated dataframe
         """
-        cos_theta, sin_theta = math.cos(rotation_angle), math.sin(rotation_angle)
-        rotated_df=pd.DataFrame()
+        angle = - rotation_angle #counterclockwise
+        cos_theta, sin_theta = math.cos(angle), math.sin(angle)
+        rotated_df = pd.DataFrame()
         rotated_df['x'], rotated_df['y'] = df['x'] * cos_theta - df['y'] * sin_theta, df['x'] * sin_theta + df['y'] * cos_theta
         rotated_df['likelihood']=self.df_raw['likelihood']
-        
-        rotated_df.loc[:, ('y')] *= -1
         return rotated_df
-    
+        
     def _convert_df_to_cm(self, conversion_factor: float, df: pd.DataFrame)->pd.DataFrame:
         """
         The coordinates are converted to cm.
@@ -736,7 +716,6 @@ class Bodypart2D():
     def immobility_threshold(self) -> float:
         """ Arbitrary chosen threshold in cm per s for defining immobility."""
         return 1.
-        #arbitrary chosen
     
     @property
     def dlc_likelihood_threshold(self)->float:

@@ -350,8 +350,8 @@ class Recording3D(ABC):
         This is set as a parameter (in the future: Parameter object) self.facing_towards_open_end with Boolean values.
         """
         self.facing_towards_open_end = self._initialize_new_parameter(dtype=bool)
-        self.facing_towards_open_end.loc[(self.bodyparts['Front'].df.loc[:, 'x']>self.bodyparts['Back'].df.loc[:, 'x']) &
-                                    (self.bodyparts['Front'].df.loc[:, 'x']>self.bodyparts['Back'].df.loc[:, 'x'])] = True
+        self.facing_towards_open_end.loc[(self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarLeft'].df.loc[:, 'x']) &
+                                    (self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarRight'].df.loc[:, 'x'])] = True
         
         
     def _get_turns(self)->None:
