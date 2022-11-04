@@ -356,12 +356,13 @@ class Recording2D(ABC):
         changes_from_immobility_to_mobility = self.all_freezing_bodyparts_immobile.where(self.all_freezing_bodyparts_immobile.diff()==True).dropna()
         start_indices_of_immobility_bouts = changes_from_immobility_to_mobility[::2]
         end_indices_of_immobility_bouts = changes_from_immobility_to_mobility[1::2]
-        self.immobility_bouts = []
+        immobility_bouts = []
         for i in range(len(start_indices_of_immobility_bouts)):
             start_index, end_index = start_indices_of_immobility_bouts.index[i], end_indices_of_immobility_bouts.index[i]
             immobility_bout = EventBout2D(start_index = start_index, end_index = end_index, recorded_framerate = self.recorded_framerate)
             if immobility_bout.duration > 0.2:
-                self.immobility_bouts.append(immobility_bout)
+                immobility_bouts.append(immobility_bout)
+        self.immobility_bouts = EventSeries(range_end = self.bodyparts['Snout'].df.shape[0], events = immobility_bouts, recorded_framerate = self.recorded_framerate, range_start = 0)
             
             
     def _run_operations_on_immobility_bouts(self)->None:
@@ -370,11 +371,8 @@ class Recording2D(ABC):
         
         A pandas.DataFrame for immobility bouts is created and set as self.immobility_bout_df.
         """
-        for immobility_bout in self.immobility_bouts:
-            immobility_bout.check_direction(facing_towards_open_end=self.facing_towards_open_end)
-            immobility_bout.check_that_freezing_threshold_was_reached()
-            immobility_bout.get_position(centerofgravity=self.bodyparts["centerofgravity"])
-        self.immobility_bout_df = pd.DataFrame([immobility_bout.dict for immobility_bout in self.immobility_bouts])
+        self.immobility_bouts.run_basic_operations_on_events(facing_towards_open_end = self.facing_towards_open_end, centerofgravity = self.bodyparts['centerofgravity'])
+        self.immobility_bout_df = pd.DataFrame([immobility_bout.dict for immobility_bout in self.immobility_bouts.events])
             
             
     def _collect_freezing_bouts(self)->None:
@@ -383,11 +381,13 @@ class Recording2D(ABC):
         
         A pandas.DataFrame for freezing bouts is created and set as self.freezing_bout_df.
         """
-        self.freezing_bouts = []
-        for immobility_bout in self.immobility_bouts:
+        freezing_bouts = []
+        for immobility_bout in self.immobility_bouts.events:
             if immobility_bout.freezing_threshold_reached:
-                self.freezing_bouts.append(immobility_bout)
-        self.freezing_bout_df = pd.DataFrame([freezing_bout.dict for freezing_bout in self.freezing_bouts])
+                freezing_bouts.append(immobility_bout)
+        self.freezing_bouts = EventSeries(range_end = self.bodyparts['Snout'].df.shape[0], events = freezing_bouts, recorded_framerate = self.recorded_framerate, range_start = 0)
+        self.freezing_bouts.run_basic_operations_on_events(facing_towards_open_end = self.facing_towards_open_end, centerofgravity = self.bodyparts['centerofgravity'])
+        self.freezing_bout_df = pd.DataFrame([freezing_bout.dict for freezing_bout in self.freezing_bouts.events])
 
 
     def run_gait_analysis(self)->None:
@@ -449,6 +449,7 @@ class Recording2D(ABC):
                 if len(gait_event)>x:
                     gait_events.append(gait_event)
                 gait_event = []
+        # gait_event as EventSeries including/not including bouts?
         return gait_events
     
     def _get_gait_event_bouts(self, gait_events: List)->None:
@@ -466,9 +467,12 @@ class Recording2D(ABC):
         """
         self.turns_to_closed_after_gait = [turn for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.turns_to_closed) for gait_event in gait_events] for turn in sublist if type(turn)==EventBout2D]
         self.turns_to_open_after_gait = [turn for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.turns_to_open) for gait_event in gait_events] for turn in sublist if type(turn)==EventBout2D]
-        self.gait_disruption_bouts = [disruption for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.immobility_bouts) for gait_event in gait_events] for disruption in sublist if type(disruption)==EventBout2D]
-        self.freezing_of_gait_events = [freezing for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.freezing_bouts) for gait_event in gait_events] for freezing in sublist if type(freezing)==EventBout2D]
-
+        gait_disruption_bouts = [disruption for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.immobility_bouts.events) for gait_event in gait_events] for disruption in sublist if type(disruption)==EventBout2D]
+        self.gait_disruption_bouts = EventSeries(range_end = self.bodyparts['Snout'].df.shape[0], events = gait_disruption_bouts, recorded_framerate = self.recorded_framerate, range_start = 0)
+        self.gait_disruption_bouts.run_basic_operations_on_events(facing_towards_open_end = self.facing_towards_open_end, centerofgravity = self.bodyparts['centerofgravity'])
+        freezing_of_gait_events = [freezing for sublist in [self._bout_after_gait_event(gait_event = gait_event, event = self.freezing_bouts.events) for gait_event in gait_events] for freezing in sublist if type(freezing)==EventBout2D]
+        self.freezing_of_gait_events = EventSeries(range_end = self.bodyparts['Snout'].df.shape[0], events = freezing_of_gait_events, recorded_framerate = self.recorded_framerate, range_start = 0)
+        self.freezing_of_gait_events.run_basic_operations_on_events(facing_towards_open_end = self.facing_towards_open_end, centerofgravity = self.bodyparts['centerofgravity'])
             
     def _bout_after_gait_event(self, gait_event: List, event: List)->List:
         """
@@ -599,7 +603,7 @@ class Bodypart2D():
         translated_df = self._translate_df(translation_vector=translation_vector)
         rotated_df = self._rotate_df(rotation_angle=rotation_angle, df=translated_df)
         self.df = self._convert_df_to_cm(conversion_factor=conversion_factor, df=rotated_df)
-        # to increase computations outcomment the two lines below
+        # to reduce computation time outcomment the two lines below
         #self._exclude_frames()
         #self._interpolate_low_likelihood_frames()
     
@@ -677,7 +681,6 @@ class Bodypart2D():
         y = np.nan_to_num(self.df['y'], copy=True)
         spline = interpolate.UnivariateSpline(m, y, s=1)
         self.df['y'] = spline(m)
-        print('interpolated', self.id)
 
     def check_tracking_stability(self, start_end_index: Optional[Tuple]=(0, None))->float:
         """
@@ -977,3 +980,41 @@ class Step():
                 
     def _calculate_end_index(self)->None:
         pass
+    
+    
+class EventSeries(ABC):
+    @property
+    def merge_threshold(self)->float:
+        #in seconds
+        return 0.2
+    
+    
+    def __init__(self, range_end: int, events: List, recorded_framerate: int, range_start: int = 0):
+        self.events = self._merge_events(events = events, recorded_framerate = recorded_framerate)
+        
+    def _merge_events(self, events: List, recorded_framerate:int)->List:
+        events_to_keep = []  
+        for i in range(len(events)-1):
+            try:
+                events[i+1]
+            except IndexError:
+                break
+            if ((events[i+1].start_index - events[i].end_index)/recorded_framerate) < self.merge_threshold:
+                j = i + 1
+                try: 
+                    while ((events[j].start_index - events[i].end_index)/recorded_framerate) < self.merge_threshold:
+                        j += 1
+                except IndexError: 
+                    j -= 1
+                events_to_keep.append(EventBout2D(start_index = events[i].start_index, end_index = events[j].end_index, recorded_framerate=recorded_framerate))
+                for n in range(i, j):
+                    events.pop(n+1)
+            else:
+                events_to_keep.append(events[i])
+        return events_to_keep
+        
+    def run_basic_operations_on_events(self, facing_towards_open_end: pd.Series, centerofgravity: Bodypart2D):
+        for event in self.events:
+            event.check_direction(facing_towards_open_end=facing_towards_open_end)
+            event.check_that_freezing_threshold_was_reached()
+            event.get_position(centerofgravity= centerofgravity)
