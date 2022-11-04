@@ -5,4 +5,5 @@ d = { 'settings': { 'branch': 'main',
                 'doc_host': 'https://Defense-Circuits-Lab.github.io',
                 'git_url': 'https://github.com/Defense-Circuits-Lab/Gait_Analysis',
                 'lib_path': 'gait_analysis'},
-  'syms': {'gait_analysis.core': {'gait_analysis.core.foo': ('core.html#foo', 'gait_analysis/core.py')}}}
+  'syms': { 'gait_analysis.core': { 'gait_analysis.core.foo': ('core.html#foo', 'gait_analysis/core.py'),
+                                    'gait_analysis.core.test': ('core.html#test', 'gait_analysis/core.py')}}}
