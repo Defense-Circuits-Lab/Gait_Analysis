@@ -38,7 +38,7 @@ class Recording2D(ABC):
         """
         self.full_df_from_file = self._get_df_from_file(filepath = filepath)
         self.recorded_framerate = recorded_framerate
-        self.metadata = self._retrieve_metadata(filepath = filepath)
+        self.metadata = self._retrieve_metadata(filepath = filepath.name)
         
         
     def _get_df_from_file(self, filepath: Path)->pd.DataFrame:
@@ -50,7 +50,7 @@ class Recording2D(ABC):
         Returns:
             pandas.DataFrame: the Dataframe containing all bodyparts with x, y-coordinates and likelihood as returned by DLC
         """
-        if filepath.endswith('.csv'):
+        if filepath.name.endswith('.csv'):
             df = pd.read_csv(filepath)
             df = df.drop('scorer', axis=1)
             df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
@@ -58,7 +58,7 @@ class Recording2D(ABC):
             df = df.reset_index()
             df = df.drop('index', axis=1)
             df = df.astype(float)
-        elif filepath.endswith('.h5'):
+        elif filepath.name.endswith('.h5'):
             df = pd.read_hdf(filepath)
             df = df.drop('scorer', axis=1)
             df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
