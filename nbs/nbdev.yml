@@ -2,8 +2,8 @@ project:
   output-dir: _docs
 
 website:
-  title: "Gait_Analysis"
+  title: "gait_analysis"
   site-url: "https://Defense-Circuits-Lab.github.io/Gait_Analysis"
-  description: "Code for Behavior Analysis in the B06 project"
+  description: "Gait analysis for projects of the DCL"
   repo-branch: main
   repo-url: "https://github.com/Defense-Circuits-Lab/Gait_Analysis"
