@@ -356,11 +356,12 @@ class Recording2D(ABC):
         changes_from_immobility_to_mobility = self.all_freezing_bodyparts_immobile.where(self.all_freezing_bodyparts_immobile.diff()==True).dropna()
         start_indices_of_immobility_bouts = changes_from_immobility_to_mobility[::2]
         end_indices_of_immobility_bouts = changes_from_immobility_to_mobility[1::2]
-        # list comprehension
         self.immobility_bouts = []
         for i in range(len(start_indices_of_immobility_bouts)):
             start_index, end_index = start_indices_of_immobility_bouts.index[i], end_indices_of_immobility_bouts.index[i]
-            self.immobility_bouts.append(EventBout2D(start_index = start_index, end_index = end_index))
+            immobility_bout = EventBout2D(start_index = start_index, end_index = end_index, recorded_framerate = self.recorded_framerate)
+            if immobility_bout.duration > 0.2:
+                self.immobility_bouts.append(immobility_bout)
             
             
     def _run_operations_on_immobility_bouts(self)->None:
@@ -371,7 +372,7 @@ class Recording2D(ABC):
         """
         for immobility_bout in self.immobility_bouts:
             immobility_bout.check_direction(facing_towards_open_end=self.facing_towards_open_end)
-            immobility_bout.check_that_freezing_threshold_was_reached(recorded_framerate=self.recorded_framerate)
+            immobility_bout.check_that_freezing_threshold_was_reached()
             immobility_bout.get_position(centerofgravity=self.bodyparts["centerofgravity"])
         self.immobility_bout_df = pd.DataFrame([immobility_bout.dict for immobility_bout in self.immobility_bouts])
             
@@ -782,7 +783,7 @@ class EventBout2D():
         self.start_index(int): index of event onset
         self.end_index(int): index of event ending
     """
-    def __init__(self, start_index: int, end_index: Optional[int]=0)->None:
+    def __init__(self, start_index: int, end_index: Optional[int]=None, recorded_framerate: Optional[int]=None)->None:
         """
         Constructor of class EventBout that sets the attributes start_ and end_index.
         
@@ -791,8 +792,9 @@ class EventBout2D():
             end_index(Optional[int]): index of event ending (if event is not only a single frame)
         """
         self.start_index = start_index
-        if end_index!=0:
+        if end_index != None:
             self.end_index = end_index
+            self.duration = (self.end_index - self.start_index)/recorded_framerate
         else:
             self.end_index = start_index
         self._create_dict()
@@ -813,14 +815,13 @@ class EventBout2D():
         self.facing_towards_open_end = facing_towards_open_end.iloc[self.start_index]
         self.dict['facing_towards_open_end']=self.facing_towards_open_end
 
-    def check_that_freezing_threshold_was_reached(self, recorded_framerate: int)->None:
+    def check_that_freezing_threshold_was_reached(self)->None:
         """
         Function, that calculates the duration of an event and checks, whether it exceeded the freezing_threshold.
         
         Parameters:
             recorded_framerate(int): fps of the recording
         """
-        self.duration = (self.end_index - self.start_index)/recorded_framerate
         self.freezing_threshold_reached = False
         if self.duration > self.freezing_threshold:
             self.freezing_threshold_reached = True
