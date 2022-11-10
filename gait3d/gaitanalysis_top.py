@@ -152,15 +152,55 @@ class RecordingTop(ABC):
             mazecorners = self._fix_coordinates_of_maze_corners(likelihood_threshold = likelihood_threshold)
             conversion_factor = self._get_conversion_factor_px_to_cm(reference_points = mazecorners)
             translation_vector = self._get_translation_vector(reference_points = mazecorners)
-            rotation_angle = self._get_rotation_angle(reference_points = mazecorners)
-
+            rotation_angle = self._get_rotation_angle_alt(reference_points = mazecorners)
+            angle = self._get_rotation_angle(reference_points = mazecorners)
+            
             for bodypart in self.bodyparts.values():
                 bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)
             self._check_sanity(coverage_threshold = coverage_threshold)
             likelihood_threshold += 0.0005
             if likelihood_threshold > 1:
-                raise OverflowError ('The .csv could not be normalized!')
-        print(f'Normalized using coverage: {coverage_threshold} and likelihood: {likelihood_threshold}\n')
+                mazecorners = self._fix_coordinates_of_maze_corners(likelihood_threshold = 0.9999)
+                conversion_factor = self._get_conversion_factor_px_to_cm_alt(reference_points = mazecorners)
+                rotation_angle = self._get_rotation_angle_alt(reference_points = mazecorners)
+
+                for bodypart in self.bodyparts.values():
+                    bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)
+                self._check_sanity(coverage_threshold = coverage_threshold)
+                if self.sanity == False:
+                    raise OverflowError ('The .csv could not be normalized!')
+        print(f'Normalized using coverage: {coverage_threshold} and likelihood: {likelihood_threshold}\n, {math.degrees(rotation_angle)}, {math.degrees(angle)}')
+            
+            
+    def _get_conversion_factor_px_to_cm_alt(self, reference_points: Tuple[np.array, np.array])->None:
+        """
+        Function to get the conversion factor of the unspecified unit to cm.
+        
+        Parameters:
+            reference_points (Tuple): containing the vecotrs as np.arrays of the best tracked mazecorners
+            
+        Returns:
+            conversion_factor(float): factor to convert the unspecified unit into cm.
+        """
+        conversion_factor = 4/np.sqrt(sum((reference_points[2]-reference_points[0])**2))
+        return conversion_factor
+    
+    def _get_rotation_angle_alt(self, reference_points: Tuple[np.array, np.array])->None:
+        """
+        Function, that calculates the angle between the x-axis and the X-axis, rotated around the z-axis.
+        
+        Parameters:
+            reference_points (Tuple): containing the vecotrs as np.arrays of the best tracked mazecorners
+            
+        Returns:
+            float: angle in radians
+        """
+        closed_left_translated = reference_points[2]-reference_points[0]
+        a, b = closed_left_translated[0], closed_left_translated[1]
+        closed_left_translated = np.array([a, b, 0])
+        open_side = np.cross(closed_left_translated, np.array([0, 0, 1]))[0:2]
+        angle = np.dot(np.array([50, 0]), open_side)/(np.linalg.norm(np.array([50, 0]))*np.linalg.norm(open_side))
+        return math.acos(angle)
             
     def _check_sanity(self, coverage_threshold: float)->None:
         if all([self._bodypart_on_maze(bodypart = 'Snout', coverage_threshold = coverage_threshold), self._bodypart_on_maze(bodypart = 'TailBase', coverage_threshold = coverage_threshold)]):
@@ -171,7 +211,6 @@ class RecordingTop(ABC):
     def _bodypart_on_maze(self, bodypart: str, coverage_threshold: float=0.9)->bool:
         x = (self.bodyparts[bodypart].df.loc[(self.bodyparts[bodypart].df['x'] > -5) & (self.bodyparts[bodypart].df['x'] < 55), :].shape[0]/self.bodyparts[bodypart].df.shape[0])
         y = (self.bodyparts[bodypart].df.loc[(self.bodyparts[bodypart].df['y'] > -1) & (self.bodyparts[bodypart].df['y'] < 6), :].shape[0]/self.bodyparts[bodypart].df.shape[0])
-        print(x, y)
         if all([x > coverage_threshold, y > coverage_threshold]):
             return True
         else:
@@ -219,7 +258,6 @@ class RecordingTop(ABC):
         length_c = 50
         length_a = math.sqrt((open_right_translated[0]-50)**2 + (open_right_translated[1])**2)
         angle = (length_b**2 + length_c**2 - length_a**2) / (2 * length_b * length_c)  
-
         return math.acos(angle)
     
     def _load_intrinsic_camera_calibration(self, intrinsic_camera_calibration_filepath: Path) -> Tuple[np.array, np.array]:
@@ -250,7 +288,7 @@ class RecordingTop(ABC):
         mazecornerclosedright = self._get_most_reliable_marker_position(df = self.bodyparts['MazeCornerClosedRight'].df_undistort, likelihood_threshold = likelihood_threshold)
         mazecorneropenleft = self._get_most_reliable_marker_position(df = self.bodyparts['MazeCornerOpenLeft'].df_undistort, likelihood_threshold = likelihood_threshold)
         mazecornerclosedleft = self._get_most_reliable_marker_position(df = self.bodyparts['MazeCornerClosedLeft'].df_undistort, likelihood_threshold = likelihood_threshold)
-        return mazecornerclosedleft, mazecorneropenleft
+        return mazecornerclosedleft, mazecorneropenleft, mazecornerclosedright
         
     def _get_most_reliable_marker_position(self, df: pd.DataFrame, likelihood_threshold: float=0.99) -> np.array:
         while True:
