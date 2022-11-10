@@ -34,6 +34,7 @@ class RecordingTop(ABC):
             filepath(pathlib.Path): the filepath to the h5 containing DLC data
             recorded_framerate(int): fps of the recording
         """
+        self.filepath = filepath
         self.full_df_from_file = self._get_df_from_file(filepath = filepath)
         self.recorded_framerate = recorded_framerate
         self.metadata = self._retrieve_metadata(filepath = filepath.name)
@@ -82,8 +83,117 @@ class RecordingTop(ABC):
             Dict: containing date of recording, animal_id and OT paradigm
         """
         filepath_slices = filepath.split('_')
-        animal_line, animal_id, recording_date, paradigm, cam_id = filepath_slices[0], filepath_slices[1], filepath_slices[2], filepath_slices[3][0:3], filepath_slices[4]
-        return {'recording_date': recording_date, 'animal': animal_line + '_' + animal_id, 'paradigm': paradigm, 'cam': 'Top'}
+        animal_line, animal_id, recording_date, paradigm, cam_id = filepath_slices[0], filepath_slices[1], filepath_slices[2], filepath_slices[3][0:3], 'Top'
+        self._check_metadata(metadata = (animal_line, animal_id, recording_date, paradigm, cam_id))
+        return {'recording_date': self.recording_date, 'animal': self.mouse_line + '_' + self.mouse_id, 'paradigm': self.paradigm, 'cam': self.cam_id}
+    
+    
+    def _read_metadata(self, project_config_filepath: Path, recording_config_filepath: Path, video_filepath: Path)->None:
+        with open(project_config_filepath, "r") as ymlfile:
+            project_config = yaml.load(ymlfile, Loader=yaml.SafeLoader)
+        
+        with open(recording_config_filepath,'r') as ymlfile2:
+            recording_config = yaml.load(ymlfile2, Loader=yaml.SafeLoader)
+
+        for key in ['target_fps', 'valid_cam_IDs', 'paradigms', 'animal_lines', 'intrinsic_calibration_dir', 'led_extraction_type', 'led_extraction_path']:
+            try:
+                project_config[key]
+            except KeyError:
+                raise KeyError(f'Missing metadata information in the project_config_file {project_config_filepath} for {key}.')
+            
+                
+        self.target_fps = project_config['target_fps']
+        self.valid_cam_ids = project_config['valid_cam_IDs']
+        self.valid_paradigms = project_config['paradigms']
+        self.valid_mouse_lines = project_config['animal_lines']
+        self.intrinsic_calibrations_directory = Path(project_config['intrinsic_calibration_dir'])
+        
+        self._extract_filepath_metadata(filepath_name = video_filepath.name)
+            
+        for key in ['led_pattern', self.cam_id]:
+            try:
+                recording_config[key]
+            except KeyError:
+                raise KeyError(f'Missing information for {key} in the config_file {recording_config_filepath}!')
+        
+        self.led_pattern = recording_config['led_pattern']
+        if self.recording_date != recording_config['recording_date']:
+            raise ValueError (f'The date of the recording_config_file {recording_config_filepath} and the provided video {self.video_filepath} do not match! Did you pass the right config-file and check the filename carefully?')
+        metadata_dict = recording_config[self.cam_id]
+    
+        for key in ['fps', 'offset_row_idx', 'offset_col_idx', 'flip_h', 'flip_v', 'fisheye']:
+            try:
+                metadata_dict[key]
+            except KeyError:
+                raise KeyError(f'Missing metadata information in the recording_config_file {recording_config_filepath} for {self.cam_id} for {key}.')  
+                
+        self.fps = metadata_dict['fps']
+        self.offset_row_idx = metadata_dict['offset_row_idx']
+        self.offset_col_idx = metadata_dict['offset_col_idx']
+        self.flip_h = metadata_dict['flip_h']
+        self.flip_v = metadata_dict['flip_v']
+        self.fisheye = metadata_dict['fisheye']
+
+        self.processing_type = project_config['processing_type'][self.cam_id]
+        self.calibration_evaluation_type = project_config['calibration_evaluation_type'][self.cam_id]
+        self.processing_path = Path(project_config['processing_path'][self.cam_id])
+        self.calibration_evaluation_path = Path(project_config['calibration_evaluation_path'][self.cam_id])
+        self.led_extraction_type = project_config['led_extraction_type'][self.cam_id]
+        self.led_extraction_path = project_config['led_extraction_path'][self.cam_id]
+       
+    @property
+    def valid_paradigms(self)->List[str]:
+        return ['OTR', 'OTT', 'OTE']
+    
+    @property
+    def valid_mouse_lines(self)->List[str]:
+        return ['194', '195', '196', '206', '209']
+        
+    def _check_metadata(self, metadata = Tuple[str]) -> None: 
+        animal_line, animal_id, recording_date, paradigm, cam_id = metadata[0], metadata[1], metadata[2], metadata[3], metadata[4]
+        self.cam_id = cam_id
+        if animal_line not in self.valid_mouse_lines:
+            while True:
+                entered_input = input(f'Mouse line for {self.filepath}')
+                if entered_input in self.valid_mouse_lines:
+                    self.mouse_line = entered_input
+                    break
+                else:
+                    print(f'Entered mouse line does not match any of the defined mouse lines. \nPlease enter one of the following lines: {self.valid_mouse_lines}')
+        else:
+            self.mouse_line = animal_line
+        if not animal_id.startswith('F'):
+            while True:
+                entered_input = input(f'Mouse ID for {self.filepath}')
+                if entered_input.startswith('F'):
+                    self.mouse_id = entered_input
+                    break
+                else:
+                    print(f'Animal ID has to start with F. Example: F2-14')
+        else:
+            self.mouse_id = animal_id
+        if paradigm not in self.valid_paradigms:
+            while True:
+                entered_input = input(f'Paradigm for {self.filepath}')
+                if entered_input in self.valid_paradigms:
+                    self.paradigm = entered_input
+                    break
+                else:
+                    print(f'Entered paradigm does not match any of the defined paradigms. \nPlease enter one of the following paradigms: {self.valid_paradigms}')
+        else:
+            self.paradigm = paradigm
+        try:
+            int(recording_date)
+            self.recording_date = recording_date
+        except:
+            while True:
+                entered_input = input(f'Recording date for {self.filepath}')
+                try:
+                    int(recording_date)
+                    self.recording_date = recording_date
+                    break
+                except:
+                    print(f'Entered recording date has to be an integer in shape YYMMDD. Example: 220812')
         
     def run(self, intrinsic_camera_calibration_filepath: Path)->None:
         """
@@ -99,6 +209,7 @@ class RecordingTop(ABC):
             xy_offset(Tuple): cropping offsets of the recorded video
             video_filepath: path to the recorded video
         """
+        self.log = {}
         self._calculate_center_of_gravity()
         K, D = self._load_intrinsic_camera_calibration(intrinsic_camera_calibration_filepath = intrinsic_camera_calibration_filepath)
         size = (640, 480)
@@ -148,6 +259,7 @@ class RecordingTop(ABC):
         self.sanity = False
         likelihood_threshold = 0.99
         coverage_threshold = 0.95
+        self.log['crashed'] = False
         while self.sanity == False:
             mazecorners = self._fix_coordinates_of_maze_corners(likelihood_threshold = likelihood_threshold)
             conversion_factor = self._get_conversion_factor_px_to_cm(reference_points = mazecorners)
@@ -157,7 +269,8 @@ class RecordingTop(ABC):
             
             for bodypart in self.bodyparts.values():
                 bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)
-            self._check_sanity(coverage_threshold = coverage_threshold)
+            if self._check_sanity(coverage_threshold = coverage_threshold):
+                break
             likelihood_threshold += 0.0005
             if likelihood_threshold > 1:
                 mazecorners = self._fix_coordinates_of_maze_corners(likelihood_threshold = 0.9999)
@@ -168,9 +281,20 @@ class RecordingTop(ABC):
                     bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)
                 self._check_sanity(coverage_threshold = coverage_threshold)
                 if self.sanity == False:
+                    self.log['crashed'] = True
                     raise OverflowError ('The .csv could not be normalized!')
-        print(f'Normalized using coverage: {coverage_threshold} and likelihood: {likelihood_threshold}.\n')
-            
+        self.log['likelihood_threshold'] = likelihood_threshold
+        self.log['rotation_angle'] = rotation_angle
+        self.log['conversion_factor'] = conversion_factor
+        self.log['plotting_marker'] = self._add_plotting_marker_to_log(likelihood_threshold = likelihood_threshold)
+        self.log['number_frames'] = self.bodyparts['Snout'].df.shape[0]
+        
+    def _add_plotting_marker_to_log(self, likelihood_threshold: float)->None:
+        mazecorneropenright = self._get_most_reliable_marker_position(df = self.bodyparts['MazeCornerOpenRight'].df, likelihood_threshold = likelihood_threshold)
+        mazecornerclosedright = self._get_most_reliable_marker_position(df = self.bodyparts['MazeCornerClosedRight'].df, likelihood_threshold = likelihood_threshold)
+        mazecorneropenleft = self._get_most_reliable_marker_position(df = self.bodyparts['MazeCornerOpenLeft'].df, likelihood_threshold = likelihood_threshold)
+        mazecornerclosedleft = self._get_most_reliable_marker_position(df = self.bodyparts['MazeCornerClosedLeft'].df, likelihood_threshold = likelihood_threshold)
+        return [mazecornerclosedleft, mazecornerclosedright, mazecorneropenright, mazecorneropenleft]
             
     def _get_conversion_factor_px_to_cm_alt(self, reference_points: Tuple[np.array, np.array])->None:
         """
@@ -203,20 +327,23 @@ class RecordingTop(ABC):
         return math.acos(angle)
             
     def _check_sanity(self, coverage_threshold: float=0.95)->None:
-        if all([self._bodypart_on_maze(bodypart = 'Snout', coverage_threshold = coverage_threshold), 
-                self._bodypart_on_maze(bodypart = 'TailBase', coverage_threshold = coverage_threshold)
-               ]):
+        a, snout = self._bodypart_on_maze(bodypart = 'Snout', coverage_threshold = coverage_threshold)
+        b, tailbase = self._bodypart_on_maze(bodypart = 'TailBase', coverage_threshold = coverage_threshold)
+        if all([a, b]):
+            self.log['snout_on_maze'] = snout
+            self.log['tailbase_on_maze'] = tailbase
             self.sanity = True
+            return True
         else:
-            pass
+            return False
 
     def _bodypart_on_maze(self, bodypart: str, coverage_threshold: float=0.9)->bool:
         x = (self.bodyparts[bodypart].df.loc[(self.bodyparts[bodypart].df['x'] > -5) & (self.bodyparts[bodypart].df['x'] < 55), :].shape[0]/self.bodyparts[bodypart].df.shape[0])
         y = (self.bodyparts[bodypart].df.loc[(self.bodyparts[bodypart].df['y'] > -1) & (self.bodyparts[bodypart].df['y'] < 6), :].shape[0]/self.bodyparts[bodypart].df.shape[0])
         if all([x > coverage_threshold, y > coverage_threshold]):
-            return True
+            return True, (x+y)/2
         else:
-            return False
+            return False, 0
         
     def _get_conversion_factor_px_to_cm(self, reference_points: Tuple[np.array, np.array])->float:
         """
@@ -316,6 +443,8 @@ class RecordingTop(ABC):
         #for bodypart in set(['MazeCornerOpenLeft', 'MazeCornerOpenRight', 'MazeCornerClosedLeft', 'MazeCornerClosedRight', 'LED5']): 
             #tracking_dict['standard_derivation']=np.stddev([])
         self.tracking_performance = pd.DataFrame([tracking_dict], index=['over_total_session', 'over_gait_events'])
+        self.log['snout_tracking'] = self.tracking_performance.loc['over_total_session', 'Snout']
+        self.log['tailbase_tracking'] = self.tracking_performance.loc['over_total_session', 'TailBase']
     
     def get_freezing_bouts(self)->None:
         """
@@ -475,7 +604,8 @@ class RecordingTop(ABC):
                 bouts.append(bout)
         return bouts
     
-    def export_as_session(self, save: bool=False):
+    def export_as_session(self, save: bool=False)->None:
+        self.log['missing_event_types'] = []
         self.session_df = pd.DataFrame(columns = ['mean_value', 'total_count', 'total_duration', 'mean_x_position', 'mean_duration', 'total_count_facing_open', 'mean_duration_facing_open', 'mean_x_position_facing_open'])
         avg_speed = self.bodyparts['centerofgravity'].df['speed_cm_per_s'].mean()
         self.session_df.loc['average_speed_cm_per_s', 'mean_value'] = avg_speed
@@ -494,9 +624,33 @@ class RecordingTop(ABC):
                 else:
                     self.session_df.loc[event_type.event_type, ['total_count', 'total_duration','mean_x_position', 'mean_duration']] = total_count, total_duration, mean_x_position, mean_duration
             except KeyError:
-                pass
+                self.log['missing_event_types'].append(event_type.event_type)
         if save:
-            self.session_df.to_csv(f'{self.animal_id}_{self.recording_date}_{self.paradigm}.csv')
+            self.session_df.to_csv(f'{self.metadata["animal"]}_{self.metadata["recording_date"]}_{self.metadata["paradigm"]}.csv')
+        self._create_report()
+        
+    def _create_report(self)->None:
+        reporting = False
+        print(f'\n\nReport for {self.metadata["animal"]}_{self.metadata["recording_date"]}_{self.metadata["paradigm"]}: ')
+        if len (self.log['missing_event_types']) > 0:
+            reporting = True
+            print(f'\nMissing events: {self.log["missing_event_types"]}')
+        if self.log['snout_tracking'] < 0.9:
+            reporting = True
+            print(f'\nSnout tracking: {self.log["snout_tracking"]}')
+        if self.log['tailbase_tracking'] < 0.9:
+            reporting = True
+            print(f'\nTailBase tracking: {self.log["tailbase_tracking"]}')
+        if self.log['snout_on_maze'] < 0.95 or self.log['tailbase_on_maze'] < 0.95:
+            reporting = True
+            print(f'\nRotation or normalization didnt work out well. \nUsed {self.log["rotation_angle"]} and {self.log["conversion_factor"]}.\nCheck out the distribution plot!')
+        if self.log['number_frames'] < 60*self.recorded_framerate:
+            reporting = True
+            print(f'\nDetected only {self.log["number_frames"]} frames! \nThats less than one minute in framerate {self.recorded_framerate}!')
+        if not reporting:
+            print('\nNothing to report!')
+
+            
                 
 class Bodypart2D():
     """
