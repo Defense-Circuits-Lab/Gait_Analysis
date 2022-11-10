@@ -82,8 +82,8 @@ class RecordingTop(ABC):
             Dict: containing date of recording, animal_id and OT paradigm
         """
         filepath_slices = filepath.split('_')
-        animal_line, animal_id, recording_date, paradigm, cam_id = filepath_slices[0], filepath_slices[1], filepath_slices[2], filepath_slices[3], filepath_slices[4]
-        return {'recording_date': recording_date, 'animal': animal_line + '_' + animal_id, 'paradigm': paradigm, 'cam': cam_id}
+        animal_line, animal_id, recording_date, paradigm, cam_id = filepath_slices[0], filepath_slices[1], filepath_slices[2], filepath_slices[3][0:3], filepath_slices[4]
+        return {'recording_date': recording_date, 'animal': animal_line + '_' + animal_id, 'paradigm': paradigm, 'cam': 'Top'}
         
     def run(self, intrinsic_camera_calibration_filepath: Path)->None:
         """
@@ -169,7 +169,7 @@ class RecordingTop(ABC):
                 self._check_sanity(coverage_threshold = coverage_threshold)
                 if self.sanity == False:
                     raise OverflowError ('The .csv could not be normalized!')
-        print(f'Normalized using coverage: {coverage_threshold} and likelihood: {likelihood_threshold}\n, {math.degrees(rotation_angle)}, {math.degrees(angle)}')
+        print(f'Normalized using coverage: {coverage_threshold} and likelihood: {likelihood_threshold}.\n')
             
             
     def _get_conversion_factor_px_to_cm_alt(self, reference_points: Tuple[np.array, np.array])->None:
@@ -202,8 +202,10 @@ class RecordingTop(ABC):
         angle = np.dot(np.array([50, 0]), open_side)/(np.linalg.norm(np.array([50, 0]))*np.linalg.norm(open_side))
         return math.acos(angle)
             
-    def _check_sanity(self, coverage_threshold: float)->None:
-        if all([self._bodypart_on_maze(bodypart = 'Snout', coverage_threshold = coverage_threshold), self._bodypart_on_maze(bodypart = 'TailBase', coverage_threshold = coverage_threshold)]):
+    def _check_sanity(self, coverage_threshold: float=0.95)->None:
+        if all([self._bodypart_on_maze(bodypart = 'Snout', coverage_threshold = coverage_threshold), 
+                self._bodypart_on_maze(bodypart = 'TailBase', coverage_threshold = coverage_threshold)
+               ]):
             self.sanity = True
         else:
             pass
@@ -473,8 +475,8 @@ class RecordingTop(ABC):
                 bouts.append(bout)
         return bouts
     
-    def export_as_session(self):
-        self.session_df = pd.DataFrame(columns = ['mean_value', 'total_count', 'mean_x_position', 'mean_duration', 'total_count_facing_open', 'mean_duration_facing_open', 'mean_x_position_facing_open'])
+    def export_as_session(self, save: bool=False):
+        self.session_df = pd.DataFrame(columns = ['mean_value', 'total_count', 'total_duration', 'mean_x_position', 'mean_duration', 'total_count_facing_open', 'mean_duration_facing_open', 'mean_x_position_facing_open'])
         avg_speed = self.bodyparts['centerofgravity'].df['speed_cm_per_s'].mean()
         self.session_df.loc['average_speed_cm_per_s', 'mean_value'] = avg_speed
         for event_type in [self.immobility_bouts, self.gait_disruption_bouts, self.freezing_bouts, self.freezing_of_gait_events, self.gait_events]:
@@ -483,15 +485,18 @@ class RecordingTop(ABC):
                 total_count = event_type.total_count
                 mean_duration = event_type.mean_duration
                 mean_x_position = event_type.mean_x_position
+                total_duration = event_type.total_duration
                 if event_type.event_type != 'Gait':
                     total_count_facing_open = event_type.total_count_facing_open
                     mean_duration_facing_open = event_type.mean_duration_facing_open
                     mean_x_position_facing_open = event_type.mean_x_position_facing_open
-                    self.session_df.loc[event_type.event_type, ['total_count', 'mean_x_position', 'mean_duration', 'total_count_facing_open', 'mean_duration_facing_open', 'mean_x_position_facing_open']] = total_count, mean_x_position, mean_duration, total_count_facing_open, mean_duration_facing_open, mean_x_position_facing_open
+                    self.session_df.loc[event_type.event_type, ['total_count', 'total_duration','mean_x_position', 'mean_duration', 'total_count_facing_open', 'mean_duration_facing_open', 'mean_x_position_facing_open']] = total_count, total_duration, mean_x_position, mean_duration, total_count_facing_open, mean_duration_facing_open, mean_x_position_facing_open
                 else:
-                    self.session_df.loc[event_type.event_type, ['total_count', 'mean_x_position', 'mean_duration']] = total_count, mean_x_position, mean_duration
+                    self.session_df.loc[event_type.event_type, ['total_count', 'total_duration','mean_x_position', 'mean_duration']] = total_count, total_duration, mean_x_position, mean_duration
             except KeyError:
                 pass
+        if save:
+            self.session_df.to_csv(f'{self.animal_id}_{self.recording_date}_{self.paradigm}.csv')
                 
 class Bodypart2D():
     """
@@ -540,8 +545,8 @@ class Bodypart2D():
         translated_df = self._translate_df(translation_vector=translation_vector)
         rotated_df = self._rotate_df(rotation_angle=rotation_angle, df=translated_df)
         self.df = self._convert_df_to_cm(conversion_factor=conversion_factor, df=rotated_df)
-        #self._exclude_frames()
-        #self._interpolate_low_likelihood_frames()
+        self._exclude_frames()
+        self._interpolate_low_likelihood_frames()
     
    
     def _translate_df(self, translation_vector: np.array)->pd.DataFrame:
@@ -600,21 +605,16 @@ class Bodypart2D():
     def _exclude_frames(self) -> None:
         if self.id == 'centerofgravity':
             self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold**2, ('x', 'y')] = np.NaN
-        elif self.id in set(['Back', 'Front']):
-            self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold**3, ('x', 'y')] = np.NaN
         else:
             self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold, ('x', 'y')] = np.NaN
+        self.df.loc[(self.df['x'] < -5) | (self.df['x'] > 55) | (self.df['y'] < -1) | (self.df['y'] > 6), ('x', 'y')] = np.NaN
             
     def _interpolate_low_likelihood_frames(self) -> None:
-        #Data smoothening:
-        m = np.arange(0, self.df.shape[0])
-        x = np.nan_to_num(self.df['x'], copy=True)
-        spline = interpolate.UnivariateSpline(m, x, s=1)
-        self.df['x'] = spline(m)
-        y = np.nan_to_num(self.df['y'], copy=True)
-        spline = interpolate.UnivariateSpline(m, y, s=1)
-        self.df['y'] = spline(m)
-
+        try:
+            self.df = self.df.interpolate(limit = 10, method = 'slinear', order=1)
+        except ValueError:
+            pass
+        
     def check_tracking_stability(self, start_end_index: Optional[Tuple]=(0, None))->float:
         """
         Function, that calculates the percentage of frames, in which the marker was detected with high likelihood.
@@ -827,6 +827,7 @@ class EventSeries(ABC):
         self.df = pd.DataFrame(data = data)
         self.mean_x_position = self.df['x_position'].mean()
         self.mean_duration = self.df['duration'].mean()
+        self.total_duration = self.df['duration'].sum()
         self.total_count = len(self.events)
         self.mean_x_position_facing_open = self.df.loc[self.df['facing_towards_open_end'] == True, 'x_position'].mean()
         self.mean_duration_facing_open = self.df.loc[self.df['facing_towards_open_end'] == True, 'duration'].mean()
