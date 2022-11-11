@@ -326,7 +326,7 @@ class RecordingTop(ABC):
         angle = np.dot(np.array([50, 0]), open_side)/(np.linalg.norm(np.array([50, 0]))*np.linalg.norm(open_side))
         return math.acos(angle)
             
-    def _check_sanity(self, coverage_threshold: float=0.95)->None:
+    def _check_sanity(self, coverage_threshold: float=0.95)->bool:
         a, snout = self._bodypart_on_maze(bodypart = 'Snout', coverage_threshold = coverage_threshold)
         b, tailbase = self._bodypart_on_maze(bodypart = 'TailBase', coverage_threshold = coverage_threshold)
         if all([a, b]):
@@ -422,7 +422,9 @@ class RecordingTop(ABC):
     def _get_most_reliable_marker_position(self, df: pd.DataFrame, likelihood_threshold: float=0.99) -> np.array:
         while True:
             df_reliable_frames = df.loc[df['likelihood'] >= likelihood_threshold, ['x', 'y']].copy()
-            if df_reliable_frames.shape[0] > 0:
+            if df_reliable_frames.shape[0] > 9: # increase minimum number of detected marker positions from 1 to 10
+                break
+            if likelihood_threshold <= 0.9: # add while loop exit if likelihood drops too low
                 break
             likelihood_threshold -= 0.0005
         return np.array([df_reliable_frames['x'].median(), df_reliable_frames['y'].median()])
