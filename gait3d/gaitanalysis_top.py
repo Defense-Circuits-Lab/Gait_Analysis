@@ -256,33 +256,22 @@ class RecordingTop(ABC):
         and the angle between x-axis and X-axis for 2D rotation.
         With this parameters it calls the normalization for each single bodypart.
         """
-        self.sanity = False
         likelihood_threshold = 0.99
         coverage_threshold = 0.95
         self.log['crashed'] = False
-        while self.sanity == False:
-            mazecorners = self._fix_coordinates_of_maze_corners(likelihood_threshold = likelihood_threshold)
-            conversion_factor = self._get_conversion_factor_px_to_cm(reference_points = mazecorners)
-            translation_vector = self._get_translation_vector(reference_points = mazecorners)
-            rotation_angle = self._get_rotation_angle_alt(reference_points = mazecorners)
-            angle = self._get_rotation_angle(reference_points = mazecorners)
-            
-            for bodypart in self.bodyparts.values():
-                bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)
-            if self._check_sanity(coverage_threshold = coverage_threshold):
-                break
-            likelihood_threshold += 0.0005
-            if likelihood_threshold > 1:
-                mazecorners = self._fix_coordinates_of_maze_corners(likelihood_threshold = 0.9999)
-                conversion_factor = self._get_conversion_factor_px_to_cm_alt(reference_points = mazecorners)
-                rotation_angle = self._get_rotation_angle_alt(reference_points = mazecorners)
 
-                for bodypart in self.bodyparts.values():
-                    bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)
-                self._check_sanity(coverage_threshold = coverage_threshold)
-                if self.sanity == False:
-                    self.log['crashed'] = True
-                    raise OverflowError ('The .csv could not be normalized!')
+        mazecorners = self._fix_coordinates_of_maze_corners(likelihood_threshold = likelihood_threshold)
+        conversion_factor = self._get_conversion_factor_px_to_cm(reference_points = mazecorners)
+        translation_vector = self._get_translation_vector(reference_points = mazecorners)
+        rotation_angle = self._get_rotation_angle_alt(reference_points = mazecorners)
+        angle = self._get_rotation_angle(reference_points = mazecorners)
+
+        for bodypart in self.bodyparts.values():
+            bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)
+        self.sanity = self._check_sanity(coverage_threshold = coverage_threshold):
+        if self.sanity == False:
+            self.log['crashed'] = True
+            raise OverflowError ('The .csv could not be normalized!')
         self.log['likelihood_threshold'] = likelihood_threshold
         self.log['rotation_angle'] = rotation_angle
         self.log['conversion_factor'] = conversion_factor
