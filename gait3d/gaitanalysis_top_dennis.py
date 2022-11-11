@@ -234,6 +234,22 @@ class RecordingTop(ABC):
             self.full_df_from_file[f'{label}_{coordinate}'] = (sum([self.full_df_from_file[f'{bp}_{coordinate}'] for bp in bodyparts]))/len(bodyparts)
         self.full_df_from_file[f'{label}_likelihood'] = np.prod([self.full_df_from_file[f'{bp}_likelihood'] for bp in bodyparts], axis = 0) 
 
+    
+    def _load_intrinsic_camera_calibration(self, intrinsic_camera_calibration_filepath: Path) -> Tuple[np.array, np.array]:
+        """
+        This function opens the camera calibration from the pickle file and adjusts it based on the cropping parameters.
+        
+        Parameters:
+            intrinsic_camera_calibration_filepath(Path): pickle file containing intrinsic camera parameters
+            x_offset(int): cropping offset x of the recorded video
+            y_offset(int): cropping offset y of the recorded video
+        Returns:
+            Tuple: the camera matrix K and the distortion coefficient D as np.array
+        """
+        with open(intrinsic_camera_calibration_filepath, 'rb') as io:
+            intrinsic_calibration = pickle.load(io)
+        return intrinsic_calibration['K'], intrinsic_calibration['D']
+
 
     def _create_all_bodyparts(self)->None:
         """
@@ -253,8 +269,8 @@ class RecordingTop(ABC):
     
     def _normalize_coordinate_system(self) -> None:
         corners = self._get_corner_coords_with_likelihoods()
-        translation_vector = self._get_translation_vector(coords_closed_right = corners['MazeCornerClosedRight']['coords'])
-        best_result = self._evaluate_maze_shape_using_open_corners(corners_and_likelihoods = corners, tolerance = 0.10)
+        translation_vector = self._get_translation_vector(coords_closed_left = corners['MazeCornerClosedLeft']['coords'])
+        best_result = self._evaluate_maze_shape_using_open_corners(corners_and_likelihoods = corners, tolerance = 0.25)
         if best_result['valid']:
             conversion_factor = self._get_conversion_factor_px_to_cm(coords_point_a = corners[f'MazeCornerClosed{best_result["side_id"]}']['coords'],
                                                                      coords_point_b = corners[f'MazeCornerOpen{best_result["side_id"]}']['coords'],
@@ -287,21 +303,15 @@ class RecordingTop(ABC):
                                                        rotation_angle = rotation_angle)
             normalized_corner_coords.append(normalized_coords)
         self.log['plotting_marker'] = normalized_corner_coords
+        self.log['closed_right'] = self._normalize_coords(coords = corners['MazeCornerClosedRight']['coords'],
+                                                       translation_vector = translation_vector,
+                                                       conversion_factor = conversion_factor,
+                                                       rotation_angle = rotation_angle)
+        self.log['closed_left'] = self._normalize_coords(coords = corners['MazeCornerClosedLeft']['coords'],
+                                                       translation_vector = translation_vector,
+                                                       conversion_factor = conversion_factor,
+                                                       rotation_angle = rotation_angle)
         self.log['number_frames'] = self.bodyparts['Snout'].df.shape[0]
-        
-        
-    def _normalize_coords(self, coords: np.ndarray, translation_vector: np.ndarray, conversion_factor: float, rotation_angle: float) -> np.ndarray:
-        translated_coords = coords + translation_vector
-        converted_coords = translated_coords * conversion_factor
-        rotated_coords = self._rotate_coords(coords = converted_coords, rotation_angle = rotation_angle)
-        return rotated_coords
-        
-        
-    def _rotate_coords(self, coords: np.ndarray, rotation_angle: float) -> np.ndarray:
-        cos_theta, sin_theta = math.cos(rotation_angle), math.sin(rotation_angle)
-        rotated_x = coords[0] * cos_theta - coords[1] * sin_theta
-        rotated_y = coords[0] * sin_theta + coords[1] * cos_theta
-        return np.asarray([rotated_x, rotated_y])
 
         
     def _get_corner_coords_with_likelihoods(self) -> Dict:
@@ -319,9 +329,9 @@ class RecordingTop(ABC):
         return np.array([most_reliable_x, most_reliable_y]), likelihood_threshold    
             
 
-    def _get_translation_vector(self, coords_closed_right: np.ndarray) -> np.ndarray:
+    def _get_translation_vector(self, coords_closed_left: np.ndarray) -> np.ndarray:
         """
-        Function that calculates the offset of the right closed mazecorner to (0, 0).
+        Function that calculates the offset of the left closed mazecorner to (0, 0).
         
         Parameters:
             coords_closed_right (np.ndarray): containing the coordinat (i.e. vector) of the right closed maze corner that shall become 0/0
@@ -329,7 +339,7 @@ class RecordingTop(ABC):
         Returns:
             translation_vector(np.array): vector with offset in each dimension
         """
-        return -coords_closed_right
+        return -coords_closed_left
 
 
     def _evaluate_maze_shape_using_open_corners(self, corners_and_likelihoods: Dict, tolerance: float) -> Dict:
@@ -376,7 +386,7 @@ class RecordingTop(ABC):
         maze_length = self._get_distance_between_two_points(corners_and_likelihoods[f'MazeCornerClosed{side_id}']['coords'],
                                                            corners_and_likelihoods[open_corner_marker_id]['coords'])
         distance_ratio = maze_length/maze_width
-        return self._compute_error_proportion(query_value = distance_ratio, target_value = 10)
+        return self._compute_error_proportion(query_value = distance_ratio, target_value = 50/4)
 
 
     def _get_distance_between_two_points(self, coords_point_a: np.ndarray, coords_point_b: np.ndarray) -> float:
@@ -396,8 +406,9 @@ class RecordingTop(ABC):
         Returns:
             float: angle in radians
         """
-        if side_id == 'Right':
-            side_specifc_y = 0
+        print('using open corner')
+        if side_id == 'Left':
+            side_specific_y = 0
         else:
             side_specific_y = 4
         translated_closed_corner = corners[f'MazeCornerClosed{side_id}']['coords'] + translation_vector
@@ -411,32 +422,31 @@ class RecordingTop(ABC):
 
     
     def _get_rotation_angle_with_closed_corners_only(self, corners: Dict, translation_vector: np.ndarray, conversion_factor: float) -> float:
+        print('using closed corners only')
         translated_closed_left = corners['MazeCornerClosedLeft']['coords'] + translation_vector
         translated_closed_right = corners['MazeCornerClosedRight']['coords'] + translation_vector
-        target_rotated_closed_left = np.asarray([0, 4 / conversion_factor])
+        target_rotated_closed_right = np.asarray([0, 4 / conversion_factor])
         
-        length_a = self._get_distance_between_two_points(translated_closed_right, target_rotated_closed_left) * conversion_factor
-        length_b = self._get_distance_between_two_points(translated_closed_right, translated_closed_left) * conversion_factor
+        length_a = self._get_distance_between_two_points(translated_closed_right, target_rotated_closed_right) * conversion_factor
+        length_b = self._get_distance_between_two_points(translated_closed_left, translated_closed_right) * conversion_factor
         length_c = 4
         angle = math.acos((length_b**2 + length_c**2 - length_a**2) / (2 * length_b * length_c))
-        return angle        
+        return angle
 
+
+    def _normalize_coords(self, coords: np.ndarray, translation_vector: np.ndarray, conversion_factor: float, rotation_angle: float) -> np.ndarray:
+        translated_coords = coords + translation_vector
+        converted_coords = translated_coords * conversion_factor
+        rotated_coords = self._rotate_coords(coords = converted_coords, rotation_angle = rotation_angle)
+        return rotated_coords
         
-    
-    def _load_intrinsic_camera_calibration(self, intrinsic_camera_calibration_filepath: Path) -> Tuple[np.array, np.array]:
-        """
-        This function opens the camera calibration from the pickle file and adjusts it based on the cropping parameters.
         
-        Parameters:
-            intrinsic_camera_calibration_filepath(Path): pickle file containing intrinsic camera parameters
-            x_offset(int): cropping offset x of the recorded video
-            y_offset(int): cropping offset y of the recorded video
-        Returns:
-            Tuple: the camera matrix K and the distortion coefficient D as np.array
-        """
-        with open(intrinsic_camera_calibration_filepath, 'rb') as io:
-            intrinsic_calibration = pickle.load(io)
-        return intrinsic_calibration['K'], intrinsic_calibration['D']
+    def _rotate_coords(self, coords: np.ndarray, rotation_angle: float) -> np.ndarray:
+        cos_theta, sin_theta = math.cos(rotation_angle), math.sin(rotation_angle)
+        rotated_x = coords[0] * cos_theta - coords[1] * sin_theta
+        rotated_y = coords[0] * sin_theta + coords[1] * cos_theta
+        return np.asarray([rotated_x, rotated_y])
+
 
        
                 
