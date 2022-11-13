@@ -33,6 +33,10 @@ class RecordingTop(ABC):
     @property
     def valid_mouse_lines(self)->List[str]:
         return ['194', '195', '196', '206', '209']
+    
+    @property
+    def marker_ids_to_exclude_for_smoothing_and_interpolation(self) -> List[str]:
+        return ['LED5', 'MazeCornerClosedRight', 'MazeCornerClosedLeft', 'MazeCornerOpenRight', 'MazeCornerOpenLeft']
 
     
     def __init__(self, filepath: Path, fps: int)->None:
@@ -145,28 +149,27 @@ class RecordingTop(ABC):
                     self.recording_date = recording_date
                     break
                 except:
-                    print(f'Entered recording date has to be an integer in shape YYMMDD. Example: 220812')
-        
+                    print(f'Entered recording date has to be an integer in shape YYMMDD. Example: 220812')       
+
     
     def preprocess(self,
                    marker_ids_to_compute_coverage: List[str]=['TailBase', 'Snout'],
                    coverage_threshold: float=0.75, 
                    max_seconds_to_interpolate: float=0.5, 
                    likelihood_threshold: float=0.5,
-                   marker_ids_to_compute_center_of_gravity: List[str]=['TailBase', 'Snout']
+                   marker_ids_to_compute_center_of_gravity: List[str]=['TailBase', 'Snout'],
+                   relative_maze_normalization_error_tolerance: float=0.25
                    ) -> None:
         self.log = {'critical_markers': marker_ids_to_compute_coverage,
                     'coverage_threshold': coverage_threshold,
                     'max_seconds_to_interpolate': max_seconds_to_interpolate,
                     'likelihood_threshold': likelihood_threshold,
-                    'center_of_gravity_based_on': marker_ids_to_compute_center_of_gravity}
+                    'center_of_gravity_based_on': marker_ids_to_compute_center_of_gravity, 
+                    'relative_error_tolerance_corner_detection': relative_maze_normalization_error_tolerance}
         window_length = self._get_max_odd_n_frames_for_time_interval(fps = self.fps, time_interval = max_seconds_to_interpolate)
-        all_marker_ids = self._get_all_unique_marker_ids(df = self.full_df_from_file)
-        relevant_marker_ids = all_marker_ids
-        for marker_id_to_exclude in ['LED5', 'MazeCornerClosedRight', 'MazeCornerClosedLeft', 'MazeCornerOpenRight', 'MazeCornerOpenLeft']:
-            relevant_marker_ids.remove(marker_id_to_exclude)        
-        smoothed_df = self._smooth_tracked_coords_and_likelihood(marker_ids = relevant_marker_ids, window_length = window_length, polyorder = 3)
-        interpolated_df = self._interpolate_low_likelihood_intervals(df = smoothed_df, marker_ids = relevant_marker_ids, max_interval_length = window_length)
+        marker_ids_to_preprocess = self._get_preprocessing_relevant_marker_ids(df = self.full_df_from_file)
+        smoothed_df = self._smooth_tracked_coords_and_likelihood(marker_ids = marker_ids_to_preprocess, window_length = window_length, polyorder = 3)
+        interpolated_df = self._interpolate_low_likelihood_intervals(df = smoothed_df, marker_ids = marker_ids_to_preprocess, max_interval_length = window_length)
         interpolated_df_with_cog = self._add_new_marker_derived_existing_markers(df = interpolated_df,
                                                                                  existing_markers = marker_ids_to_compute_center_of_gravity,
                                                                                  new_marker_id = 'CenterOfGravity',
@@ -174,17 +177,20 @@ class RecordingTop(ABC):
         preprocessed_df = self._interpolate_low_likelihood_intervals(df = interpolated_df_with_cog,
                                                                      marker_ids = ['CenterOfGravity'],
                                                                      max_interval_length = window_length)
-        
+        self.preprocessed_df = preprocessed_df
         self.log['coverage_critical_markers'] = self._compute_coverage(df = preprocessed_df,
-                                                                         critical_marker_ids = marker_ids_to_compute_coverage,
-                                                                         likelihood_threshold = likelihood_threshold)
+                                                                       critical_marker_ids = marker_ids_to_compute_coverage,
+                                                                       likelihood_threshold = likelihood_threshold)
         self.log['coverage_CenterOfGravity'] = self._compute_coverage(df = preprocessed_df,
                                                                       critical_marker_ids = ['CenterOfGravity'],
                                                                       likelihood_threshold = likelihood_threshold)
         if self.log['coverage_critical_markers'] >= coverage_threshold:
-            self.preprocessed_df = preprocessed_df
-            #self._instantiate_all_bodypart_objects()
-            #self._normalize_coordinate_system()
+            normalization_params = self._get_parameters_to_normalize_maze_coordinates(df = preprocessed_df,
+                                                                                      relative_error_tolerance = relative_maze_normalization_error_tolerance)
+            self.normalized_df = self._normalize_df(df = preprocessed_df, normalization_parameters = normalization_params)
+            self.bodyparts = self._create_bodypart_objects()
+            self.log['normalization_parameters'] = normalization_params
+            self.log['normalized_maze_corner_coordinates'] = self._get_normalized_maze_corners(normalization_parameters = normalization_params)
             #self._run_basic_operations_on_bodyparts()
             #self._get_tracking_performance()
         else:
@@ -206,6 +212,14 @@ class RecordingTop(ABC):
                 max_odd_frame_count = frames_per_time_interval
         assert max_odd_frame_count > 0, f'The specified time interval is too short to fit an odd number of frames'
         return int(max_odd_frame_count)                
+
+
+    def _get_preprocessing_relevant_marker_ids(self, df: pd.DataFrame) -> List[str]:
+        all_marker_ids = self._get_all_unique_marker_ids(df = df)
+        relevant_marker_ids = all_marker_ids
+        for marker_id_to_exclude in self.marker_ids_to_exclude_for_smoothing_and_interpolation:
+            relevant_marker_ids.remove(marker_id_to_exclude)
+        return relevant_marker_ids
 
 
     def _get_all_unique_marker_ids(self, df: pd.DataFrame) -> List[str]:
@@ -305,86 +319,44 @@ class RecordingTop(ABC):
                                                                                                                 likelihood_threshold = likelihood_threshold)
         return idxs_where_all_markers_exceed_likelihood_threshold.shape[0] / df.shape[0]
         
-        
 
-        
-
-
-    def _create_all_bodyparts(self)->None:
-        """
-        Function, that creates a Dictionary with all Bodypart objects.
-        
-        The dictionary uses the label given from Deeplabcut tracking as key for the Bodypart objects.
-        It sets the dictionary as self.bodyparts.
-        """
-        self.bodyparts = {}
-        for key in self.full_df_from_file.keys():
-            bodypart = key.split('_')[0]
-            if bodypart not in self.bodyparts.keys():
-                self.bodyparts[bodypart] = Bodypart2D(bodypart_id = bodypart, 
-                                                      df = self.full_df_from_file, 
-                                                      camera_parameters_for_undistortion=self.camera_parameters_for_undistortion)
-                
-    
-    def _normalize_coordinate_system(self) -> None:
-        corners = self._get_corner_coords_with_likelihoods()
+    def _get_parameters_to_normalize_maze_coordinates(self, df: pd.DataFrame, relative_error_tolerance: float) -> Dict:
+        corners = self._get_corner_coords_with_likelihoods(df = df)
         translation_vector = self._get_translation_vector(coords_closed_left = corners['MazeCornerClosedLeft']['coords'])
-        best_result = self._evaluate_maze_shape_using_open_corners(corners_and_likelihoods = corners, tolerance = 0.25)
+        best_result = self._evaluate_maze_shape_using_open_corners(corners_and_likelihoods = corners, tolerance = relative_error_tolerance)
         if best_result['valid']:
-            conversion_factor = self._get_conversion_factor_px_to_cm(coords_point_a = corners[f'MazeCornerClosed{best_result["side_id"]}']['coords'],
-                                                                     coords_point_b = corners[f'MazeCornerOpen{best_result["side_id"]}']['coords'],
+            side_id = best_result['side_id']
+            self.log['maze_normalization_based_on'] = f'MazeCornerClosed{side_id}_and_MazeCornerOpen{side_id}'
+            conversion_factor = self._get_conversion_factor_px_to_cm(coords_point_a = corners[f'MazeCornerClosed{side_id}']['coords'],
+                                                                     coords_point_b = corners[f'MazeCornerOpen{side_id}']['coords'],
                                                                      distance_in_cm = 50)
             rotation_angle = self._get_rotation_angle_with_open_corner(corners = corners,
                                                                        side_id = best_result['side_id'],
                                                                        translation_vector = translation_vector,
                                                                        conversion_factor = conversion_factor)
         else:
+            self.log['maze_normalization_based_on'] = f'MazeCornerClosedRight_and_MazeCornerClosedLeft'
             conversion_factor = self._get_conversion_factor_px_to_cm(coords_point_a = corners['MazeCornerClosedLeft']['coords'],
                                                                      coords_point_b = corners['MazeCornerClosedRight']['coords'],
                                                                      distance_in_cm = 4)
             rotation_angle = self._get_rotation_angle_with_closed_corners_only(corners = corners,
                                                                                translation_vector = translation_vector,
                                                                                conversion_factor = conversion_factor)
-        for bodypart in self.bodyparts.values():
-            bodypart.normalize_df(translation_vector = translation_vector, rotation_angle = rotation_angle, conversion_factor = conversion_factor)          
-        # kept from previous version:
-        coverage_threshold = 0.9
-        likelihood_threshold = 0.6
-        self.log = {}
-        self.log['likelihood_threshold'] = likelihood_threshold
-        self.log['rotation_angle'] = rotation_angle
-        self.log['conversion_factor'] = conversion_factor
-        normalized_corner_coords = []
-        for corner_marker_id in corners.keys():
-            normalized_coords = self._normalize_coords(coords = corners[corner_marker_id]['coords'],
-                                                       translation_vector = translation_vector,
-                                                       conversion_factor = conversion_factor,
-                                                       rotation_angle = rotation_angle)
-            normalized_corner_coords.append(normalized_coords)
-        self.log['plotting_marker'] = normalized_corner_coords
-        self.log['closed_right'] = self._normalize_coords(coords = corners['MazeCornerClosedRight']['coords'],
-                                                       translation_vector = translation_vector,
-                                                       conversion_factor = conversion_factor,
-                                                       rotation_angle = rotation_angle)
-        self.log['closed_left'] = self._normalize_coords(coords = corners['MazeCornerClosedLeft']['coords'],
-                                                       translation_vector = translation_vector,
-                                                       conversion_factor = conversion_factor,
-                                                       rotation_angle = rotation_angle)
-        self.log['number_frames'] = self.bodyparts['Snout'].df.shape[0]
+        return {'translation_vector': translation_vector, 'rotation_angle': rotation_angle, 'conversion_factor': conversion_factor}
 
         
-    def _get_corner_coords_with_likelihoods(self) -> Dict:
+    def _get_corner_coords_with_likelihoods(self, df: pd.DataFrame) -> Dict:
         corner_coords_with_likelihood = {}
         for corner_marker_id in ['MazeCornerClosedRight', 'MazeCornerClosedLeft', 'MazeCornerOpenRight', 'MazeCornerOpenLeft']:
-            xy_coords, min_likelihood = self._get_most_reliable_marker_position_with_likelihood(df = self.bodyparts[corner_marker_id].df_undistort)
+            xy_coords, min_likelihood = self._get_most_reliable_marker_position_with_likelihood(df = df, marker_id = corner_marker_id)
             corner_coords_with_likelihood[corner_marker_id] = {'coords': xy_coords, 'min_likelihood': min_likelihood}
         return corner_coords_with_likelihood
 
 
-    def _get_most_reliable_marker_position_with_likelihood(self, df: pd.DataFrame, percentile: float=99.95) -> Tuple[np.array, float]:
-        likelihood_threshold = np.nanpercentile(df['likelihood'].values, percentile)
-        df_most_reliable_frames = df.loc[df['likelihood'] >= likelihood_threshold].copy()
-        most_reliable_x, most_reliable_y = df_most_reliable_frames['x'].median(), df_most_reliable_frames['y'].median()
+    def _get_most_reliable_marker_position_with_likelihood(self, df: pd.DataFrame, marker_id: str, percentile: float=99.95) -> Tuple[np.array, float]:
+        likelihood_threshold = np.nanpercentile(df[f'{marker_id}_likelihood'].values, percentile)
+        df_most_reliable_frames = df.loc[df[f'{marker_id}_likelihood'] >= likelihood_threshold].copy()
+        most_reliable_x, most_reliable_y = df_most_reliable_frames[f'{marker_id}_x'].median(), df_most_reliable_frames[f'{marker_id}_y'].median()
         return np.array([most_reliable_x, most_reliable_y]), likelihood_threshold    
             
 
@@ -465,7 +437,6 @@ class RecordingTop(ABC):
         Returns:
             float: angle in radians
         """
-        print('using open corner')
         if side_id == 'Left':
             side_specific_y = 0
         else:
@@ -481,7 +452,6 @@ class RecordingTop(ABC):
 
     
     def _get_rotation_angle_with_closed_corners_only(self, corners: Dict, translation_vector: np.ndarray, conversion_factor: float) -> float:
-        print('using closed corners only')
         translated_closed_left = corners['MazeCornerClosedLeft']['coords'] + translation_vector
         translated_closed_right = corners['MazeCornerClosedRight']['coords'] + translation_vector
         target_rotated_closed_right = np.asarray([0, 4 / conversion_factor])
@@ -493,74 +463,15 @@ class RecordingTop(ABC):
         return angle
 
 
-    def _normalize_coords(self, coords: np.ndarray, translation_vector: np.ndarray, conversion_factor: float, rotation_angle: float) -> np.ndarray:
-        translated_coords = coords + translation_vector
-        converted_coords = translated_coords * conversion_factor
-        rotated_coords = self._rotate_coords(coords = converted_coords, rotation_angle = rotation_angle)
-        return rotated_coords
-        
-        
-    def _rotate_coords(self, coords: np.ndarray, rotation_angle: float) -> np.ndarray:
-        cos_theta, sin_theta = math.cos(rotation_angle), math.sin(rotation_angle)
-        rotated_x = coords[0] * cos_theta - coords[1] * sin_theta
-        rotated_y = coords[0] * sin_theta + coords[1] * cos_theta
-        return np.asarray([rotated_x, rotated_y])
-
-
-       
-                
-class Bodypart2D():
-    """
-    Class that contains information for one single Bodypart.
-    
-    Attributes:
-        self.id(str): Deeplabcut label of the bodypart
-    """
-    def __init__(self, bodypart_id: str, df: pd.DataFrame, camera_parameters_for_undistortion: Dict)->None:
-        """ 
-        Constructor for class Bodypart. 
-        
-        Since the points in df_raw represent coordinates in the distorted dataframe, we use df_undistort for calculations.
-        
-        Parameters:
-            bodypart_id(str): unique id of marker
-            camera_parameters_for_undistortion(Dict): storage of intrinsic camera parameters K and D as well as the size of the recorded video
-        """
-        self.id = bodypart_id
-        self._get_sliced_df(df = df)
-        self._undistort_points(camera_parameters_for_undistortion)
-        
-        
-    def _get_sliced_df(self, df: pd.DataFrame)->None:
-        """
-        Function, that extracts the coordinates of a single bodypart.
-        
-        Parameters:
-            df(pandas.DataFrame): the full dataframe of the recording with all bodyparts
-        """
-        self.df_raw = pd.DataFrame(data={'x': df.loc[:, self.id + '_x'], 'y': df.loc[:, self.id + '_y'], 'likelihood': df.loc[:, self.id + '_likelihood']})
-    
-        
-    def normalize_df(self, translation_vector: np.array, rotation_angle: float, conversion_factor: float)->None:
-        """
-        Given the parameters, this function aligns the xyz-coordinate system with the null space.
-        
-        After translation to zero, rotation around the given angles and axes is performed and the units are converted into cm.
-        The normalized dataframe is set as attribut self.df.
-        
-        Parameter:
-            translation_vector(np.Array): vector with offset of xyz to XYZ in each dimension
-            rotation_matrix(scipy.spatial.transform.Rotation): Rotation matrix obtained from Euler angles
-            conversion_factor(float): factor to convert the unspecified unit into cm.
-        """
-        translated_df = self._translate_df(translation_vector=translation_vector)
-        rotated_df = self._rotate_df(rotation_angle=rotation_angle, df=translated_df)
-        self.df = self._convert_df_to_cm(conversion_factor=conversion_factor, df=rotated_df)
-        self._exclude_frames()
-        self._interpolate_low_likelihood_frames()
+    def _normalize_df(self, df: pd.DataFrame, normalization_parameters)->None:
+        unadjusted_df = df.copy()
+        translated_df = self._translate_df(df = unadjusted_df, translation_vector = normalization_parameters['translation_vector'])
+        rotated_and_translated_df = self._rotate_df(df = translated_df, rotation_angle = normalization_parameters['rotation_angle'])
+        final_df = self._convert_df_to_cm(df = rotated_and_translated_df, conversion_factor = normalization_parameters['conversion_factor'])
+        return final_df
     
    
-    def _translate_df(self, translation_vector: np.array)->pd.DataFrame:
+    def _translate_df(self, df: pd.DataFrame, translation_vector: np.array) -> pd.DataFrame:
         """
         Function that translates the raw dataframe to the null space.
         
@@ -569,29 +480,30 @@ class Bodypart2D():
         Returns:
             translated_df(pandas.DataFrame): the dataframe translated to (0, 0)
         """
-        translated_df = self.df_undistort.loc[:, ('x', 'y')] + translation_vector
-        return translated_df
+        for marker_id in self._get_all_unique_marker_ids(df = df):
+            df.loc[:, [f'{marker_id}_x', f'{marker_id}_y']] += translation_vector
+        return df
+
     
-    def _rotate_df(self, rotation_angle: float, df: pd.DataFrame)->pd.DataFrame:
+    def _rotate_df(self, df: pd.DataFrame, rotation_angle: float) -> pd.DataFrame:
         """
         Function, that rotates the dataframe in 2D.
         
-        Besides calculating the coordinates, the likelihood is added to the Dataframe.
-        
         Parameter:
-            rotation angle: angle of rotation of the xy to XY coordinate system around the z-axis
+            rotation_angle: angle in radians of rotation of the xy to XY coordinate system around the z-axis
             df(pandas.DataFrame): the dataframe that will be rotated.
         Returns:
             rotated_df(pandas.DataFrame): the rotated dataframe
         """
-        angle = rotation_angle
-        cos_theta, sin_theta = math.cos(angle), math.sin(angle)
-        rotated_df = pd.DataFrame()
-        rotated_df['x'], rotated_df['y'] = df['x'] * cos_theta - df['y'] * sin_theta, df['x'] * sin_theta + df['y'] * cos_theta
-        rotated_df['likelihood']=self.df_raw['likelihood']
-        return rotated_df
-        
-    def _convert_df_to_cm(self, conversion_factor: float, df: pd.DataFrame)->pd.DataFrame:
+        df_rotated = df.copy()
+        cos_theta, sin_theta = math.cos(rotation_angle), math.sin(rotation_angle)
+        for marker_id in self._get_all_unique_marker_ids(df = df):
+            df_rotated[f'{marker_id}_x'] = df[f'{marker_id}_x'] * cos_theta - df[f'{marker_id}_y']  * sin_theta
+            df_rotated[f'{marker_id}_y'] = df[f'{marker_id}_x'] * sin_theta + df[f'{marker_id}_y']  * cos_theta
+        return df_rotated
+
+
+    def _convert_df_to_cm(self, df: pd.DataFrame, conversion_factor: float) -> pd.DataFrame:
         """
         The coordinates are converted to cm.
         
@@ -602,8 +514,71 @@ class Bodypart2D():
         Returns:
             df(pandas.DataFrame): dataframe with values in cm
         """
-        df.loc[:, ('x', 'y')]*=conversion_factor
+        for marker_id in self._get_all_unique_marker_ids(df = df):
+            df.loc[:, [f'{marker_id}_x', f'{marker_id}_y']] *= conversion_factor
         return df
+
+
+    def _create_bodypart_objects(self) -> Dict:
+        bodyparts = {}
+        for marker_id in self._get_all_unique_marker_ids(df = self.normalized_df):
+            bodyparts[marker_id] = Bodypart2D(bodypart_id = marker_id, df = self.normalized_df)
+        return bodyparts
+
+
+    def _get_normalized_maze_corners(self, normalization_parameters: Dict) -> Dict:
+        normalized_maze_corner_coordinates = {}
+        corners = self._get_corner_coords_with_likelihoods(df = self.normalized_df)
+        for corner_marker_id in corners.keys():
+            normalized_maze_corner_coordinates[corner_marker_id] = corners[corner_marker_id]['coords']
+        return normalized_maze_corner_coordinates
+
+       
+                
+class Bodypart2D():
+    """
+    Class that contains information for one single Bodypart.
+    
+    Attributes:
+        self.id(str): Deeplabcut label of the bodypart
+    """
+    
+    @property
+    def exclusion_criteria(self) -> Dict:
+        return {'likelihood_threshold': 0.5,
+                              'min_x': -5,
+                              'max_x': 55,
+                              'min_y': -3,
+                              'max_y': 7}
+        
+    
+    def __init__(self, bodypart_id: str, df: pd.DataFrame)->None:
+        """ 
+        Constructor for class Bodypart. 
+        
+        Since the points in df_raw represent coordinates in the distorted dataframe, we use df_undistort for calculations.
+        
+        Parameters:
+            bodypart_id(str): unique id of marker
+        """
+        self.id = bodypart_id
+        sliced_df = self._slice_df(df = df)
+        self.df = self._apply_exclusion_criteria(df = sliced_df, exclusion_criteria = self.exclusion_criteria)
+        
+        
+    def _slice_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Function, that extracts the coordinates of a single bodypart.
+        
+        Parameters:
+            df(pandas.DataFrame): the full dataframe of the recording with all bodyparts
+        """
+        df_input = df.copy()
+        data = {'x': df_input.loc[:, f'{self.id}_x'], 
+                'y': df_input.loc[:, f'{self.id}_y'], 
+                'likelihood': df_input.loc[:, f'{self.id}_likelihood']}
+        return pd.DataFrame(data = data)
+    
         
     def run_basic_operations(self, fps: int)->None:
         """
@@ -613,12 +588,14 @@ class Bodypart2D():
         self._get_rolling_speed()
         self._get_immobility()
         
-    def _exclude_frames(self) -> None:
-        if self.id == 'centerofgravity':
-            self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold**2, ('x', 'y')] = np.NaN
-        else:
-            self.df.loc[self.df['likelihood']<self.dlc_likelihood_threshold, ('x', 'y')] = np.NaN
-        self.df.loc[(self.df['x'] < -5) | (self.df['x'] > 55) | (self.df['y'] < -1) | (self.df['y'] > 6), ('x', 'y')] = np.NaN
+        
+    def _apply_exclusion_criteria(self, df: pd.DataFrame, exclusion_criteria: Dict) -> None:
+        df.loc[df['likelihood'] < exclusion_criteria['likelihood_threshold'], :] = np.nan
+        for coord in ['x', 'y']:
+            df.loc[df[coord] < exclusion_criteria[f'min_{coord}'], :] = np.nan
+            df.loc[df[coord] > exclusion_criteria[f'max_{coord}'], :] = np.nan
+        return df
+    
             
     def _interpolate_low_likelihood_frames(self) -> None:
         try:
