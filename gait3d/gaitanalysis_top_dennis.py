@@ -52,6 +52,7 @@ class RecordingTop(ABC):
         self.filepath = filepath
         self.full_df_from_file = self._get_df_from_file(filepath = filepath)
         self.fps = fps
+        self.framerate = 1/fps
         self.metadata = self._retrieve_metadata(filepath = filepath.name)
 
 
@@ -533,13 +534,14 @@ class RecordingTop(ABC):
     
     
     def run_behavioral_analyses(self,
-                                immobility_max_rolling_speed: float=2.0,
                                 bodyparts_critical_for_freezing: List[str]=['Snout', 'CenterOfGravity'],
-                                freezing_min_time: float=0.5,
                                 bodyparts_for_direction_front_to_back: List[str]=['Snout', 'CenterOfGravity'],
+                                immobility_max_rolling_speed: float=2.0,
+                                immobility_min_time: float=0.2,
+                                freezing_min_time: float=0.5,
                                 gait_min_rolling_speed: float=4.0,
                                 gait_min_duration: float=1.0,
-                                gait_disruption_min_time: float=0.2,
+                                gait_disruption_max_time_to_immobility: float=0.2,
                                 merge_events_max_inbetween_time: float=0.15
                                ) -> None:
         sliding_window_size = int(round(self._get_max_odd_n_frames_for_time_interval(fps = self.fps, time_interval = 0.5) / 2, 0))
@@ -547,28 +549,34 @@ class RecordingTop(ABC):
             bodypart.calculate_speed_and_identify_immobility(sliding_window_size = sliding_window_size, immobility_threshold = immobility_max_rolling_speed)
         self.behavior_df = pd.DataFrame(data = {'facing_towards_open_end': [False]*self.normalized_df.shape[0]})
         self._add_orientation_to_behavior_df(bodyparts_for_direction_front_to_back = bodyparts_for_direction_front_to_back)
-        self._add_immobility_of_all_critical_bodyparts_to_behavior_df(bodyparts_critical_for_freezing = bodyparts_critical_for_freezing)
-        freezing_events = self._get_all_immobility_dependent_events(min_interval_duration_in_s = freezing_min_time, event_type = 'freezing')
+        self._add_immobility_based_on_several_bodyparts_to_behavior_df(bodyparts_critical_for_freezing = bodyparts_critical_for_freezing)
+        immobility_events = self._get_immobility_related_events(min_interval_duration = immobility_min_time, event_type = 'immobility_bout')
+        self._add_event_bouts_to_behavior_df(events = immobility_events)
+        freezing_events = self._get_immobility_related_events(min_interval_duration = freezing_min_time, event_type = 'freezing_bout')
         self._add_event_bouts_to_behavior_df(events = freezing_events)
-        potential_gait_disruption_events = self._get_all_immobility_dependent_events(min_interval_duration_in_s = gait_disruption_min_time, event_type = 'gait_disruption')
-        gait_disruption_events = self._filter_events(events = potential_gait_disruption_events,
-                                                     filter_column_name = 'gait'
+        gait_events = self._get_gait_events(gait_min_rolling_speed = gait_min_rolling_speed, gait_min_duration = gait_min_duration)
+        self.add_event_bouts_to_behavior_df(events = gait_events)
+        gait_disruption_events = self._get_gait_disruption_events(gait_disruption_min_time = immobility_min_time, 
+                                                                  gait_disruption_max_time_to_immobility = gait_disruption_max_time_to_immobility)
+        self.add_event_bouts_to_behavior_df(events = gait_disruption_events)
+        #self.log['rolling_speed_sliding_window_size'] = sliding_window_size
+        #self.log['bodyparts_for_direction_front_to_back'] = bodyparts_for_direction_front_to_back
+        #self.log['immobility_max_rolling_speed'] = immobility_max_rolling_speed
+        #self.log['gait_min_rolling_speed'] = gait_min_rolling_speed
+        #self.log['gait_min_duration'] = gait_min_duration
+        #self.log['gait_disruption_min_time'] = gait_disruption_min_time
+        #self.log['freezing_min_time'] = freezing_min_time
+        #self.log['merge_events_max_inbetween_time'] = merge_events_max_inbetween_time        
 
         
+    def _add_orientation_to_behavior_df(self, bodyparts_for_direction_front_to_back: List[str]) -> None:
+        assert len(bodyparts_for_direction_front_to_back) ==2, '"bodyparts_for_direction_front_to_back" must be a list of exact 2 marker_ids!'
+        front_marker_id = bodyparts_for_direction_front_to_back[0]
+        back_marker_id = bodyparts_for_direction_front_to_back[1]
+        self.behavior_df.loc[self.bodyparts[front_marker_id].df['x'] > self.bodyparts[back_marker_id].df['x'], 'facing_towards_open_end'] = True
         
-
         
-        self.log['rolling_speed_sliding_window_size'] = sliding_window_size
-        self.log['bodyparts_for_direction_front_to_back'] = bodyparts_for_direction_front_to_back
-        self.log['immobility_max_rolling_speed'] = immobility_max_rolling_speed
-        self.log['gait_min_rolling_speed'] = gait_min_rolling_speed
-        self.log['gait_min_duration'] = gait_min_duration
-        self.log['gait_disruption_min_time'] = gait_disruption_min_time
-        self.log['freezing_min_time'] = freezing_min_time
-        self.log['merge_events_max_inbetween_time'] = merge_events_max_inbetween_time
- 
-
-    def _add_immobility_of_all_critical_bodyparts_to_behavior_df(self, bodyparts_critical_for_freezing: List[str]) ->:
+    def _add_immobility_based_on_several_bodyparts_to_behavior_df(self, bodyparts_critical_for_freezing: List[str]) -> None:
         # very similar to 
         # can they be combined? different operators for check, though
         valid_idxs_per_marker_id = []
@@ -579,57 +587,99 @@ class RecordingTop(ABC):
         if len(valid_idxs_per_marker_id) > 1:
             for i in range(1, len(valid_idxs_per_marker_id)):
                 shared_valid_idxs_for_all_markers = np.intersect1d(shared_valid_idxs_for_all_markers, valid_idxs_per_marker_id[i])
-        self.behavior_df.iloc[shared_valid_idxs_for_all_markers, 'immobility'] = True
+        self.behavior_df.iloc[shared_valid_idxs_for_all_markers, 'immobility'] = True        
+        
+        
+    def _get_immobility_related_events(self, min_interval_duration: float, event_type: str) -> List[EventBout2D]:
+        all_immobility_idxs = np.where(self.behavior_df['immobility'].values == True)[0]
+        immobility_interval_border_idxs = self._get_interval_border_idxs(all_matching_idxs = all_immobility_idxs, min_interval_duration = min_interval_duration)
+        immobility_related_events = self._create_event_objects(interval_border_idxs = immobility_interval_border_idxs, event_type = event_type)
+        return immobility_related_events        
 
-    
-    def _get_all_immobility_dependent_events(self, min_interval_duration_in_s: float, event_type: str) -> List[EventBout2D]:
-        idxs_immobility_state_changes np.where(self.behavior_df['immobility'].diff().values == True)[0]
-        all_bout_start_idxs = np.concatenate([np.array([0]), idxs_immobility_state_changes])
-        all_bout_end_idxs = np.concatenate([idxs_immobility_state_changes, np.array([idxs_immobility_state_changes.shape[0]])])
-        immobility_events_matching_duration_criterion = []
+
+    def _get_interval_border_idxs(self,
+                                  all_matching_idxs: np.ndarray, 
+                                  min_interval_duration: Optional[float]=None, 
+                                  max_interval_duration: Optional[float]=None,
+                                 ) -> List[Tuple[int, int]]:
+        step_idxs = np.where(np.diff(all_matching_idxs) > 1)[0]
+        interval_end_idxs = np.concatenate([step_idxs, np.array([all_matching_idxs.shape[0] - 1])])
+        interval_start_idxs = np.concatenate([np.array([0]), step_idxs + 1])
+        interval_border_idxs = []
+        for start_idx, end_idx in zip(interval_start_idxs, interval_end_idxs):
+            interval_frame_count = (end_idx+1) - start_idx
+            interval_duration = interval_frame_count * (1/self.framerate)          
+            if (min_interval_duration != None) and (max_interval_duration != None):
+                append_interval = min_interval_duration <= interval_duration <= max_interval_duration 
+            elif min_interval_duration != None:
+                append_interval = min_interval_duration <= interval_duration
+            elif max_interval_duration != None:
+                append_interval = interval_duration <= max_interval_duration
+            else:
+                append_interval = True
+            if append_interval:
+                interval_border_idxs.append((start_idx, end_idx))
+        return interval_border_idxs
+        
+        
+    def _create_event_objects(self, interval_border_idxs: List[Tuple[int, int]], event_type: str) -> List[EventBout2D]:
+        events = []
         event_id = 0
-        for start_idx, end_idx in zip(all_bout_start_idxs, all_bout_end_idxs):
-            if (end_idx - start_idx) >= self.fps*min_interval_duration_in_s:
-                assert all(self.behavior_df.iloc[start_idx : end_idx, :]['immobility'].values), 'Not all values were True!'
-                immobility_event = EventBout2D(event_id = event_id, start_index = start_idx, end_idx = end_ix, fps = self.fps, event_type = event_type)
-                immobility_events_matching_duration_criterion.append(immobility_event)
-                event_id += 1
-        return immobility_events_matching_duration_criterion
-    
-    
+        for start_idx, end_idx in interval_border_idxs:
+            single_event = EventBout2D(event_id = event_id, start_index = start_idx, end_idx = end_ix, fps = self.fps, event_type = event_type)
+            events.append(single_event)
+            event_id += 1
+        return events         
+
+
     def _add_event_bouts_to_behavior_df(self, events: List[EventBout2D]) -> None:
         assert events[0].event_type not in list(self.behavior_df.columns), f'{events[0].event_type} was already a column in self.behavior_df!'
         self.behavior_df[events[0].event_type] = np.nan
-        self.behavior_df[f'{events[0].event_type}_bout_id'] = np.nan
+        self.behavior_df[f'{events[0].event_type}_id'] = np.nan
         for event_id, event_bout in enumerate(events):
-            # do we need to add +1 to the end_idx?
-            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx, -2] = True
-            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx, -1] = event_id
+            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx + 1, -2] = True
+            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx + 1, -1] = event_id
+
         
-
-    def _add_orientation_to_behavior_df(self, bodyparts_for_direction_front_to_back: List[str]) -> None:
-        assert len(bodyparts_for_direction_front_to_back) ==2, '"bodyparts_for_direction_front_to_back" must be a list of exact 2 marker_ids!'
-        front_marker_id = bodyparts_for_direction_front_to_back[0]
-        back_marker_id = bodyparts_for_direction_front_to_back[1]
-        self.behavior_df.loc[self.bodyparts[front_marker_id].df['x'] > self.bodyparts[back_marker_id].df['x'], 'facing_towards_open_end'] = True
+    def _get_gait_events(self, gait_min_rolling_speed: float, gait_min_duration: float) -> List[EventBout2D]:
+        idxs_with_sufficient_speed = np.where(self.bodyparts['CenterOfGravity'].df['rolling_speed_cm_per_s'].values >= gait_min_rolling_speed)[0]
+        gait_interval_border_idxs = self._get_interval_border_idxs(all_matching_idxs = idxs_with_sufficient_speed, min_interval_duration = gait_min_duration)
+        gait_events = self._create_event_objects(interval_border_idxs = gait_interval_border_idxs, event_type = 'gait_bout')
+        return gait_events
+        
     
+    def _get_gait_disruption_events(self, gait_events: List[EventBout2D], gait_disruption_max_time_to_immobility: float) -> List[EventBout2D]:
+        if int(gait_disruption_max_time_to_immobility * self.fps) == (gait_disruption_max_time_to_immobility * self.fps):
+            n_frames_max_distance = int(gait_disruption_max_time_to_immobility * self.fps)
+        else:
+            n_frames_max_distance = int(gait_disruption_max_time_to_immobility * self.fps) + 1
+        gait_disruption_interval_border_idxs = []
+        for gait_bout in gait_events:
+            end_idx = gait_bout.end_idx
+            immobility_bout_values_slice = self.behavior_df['immobility_bout'][end_idx : n_frames_max_distance + 1].values
+            potential_matches = np.where(immobility_bout_values_slice == True)[0] # also considers 1 as True ... -.-' 
+            if potential_matches.shape[0] > 0:
+                for idx in potential_matches:
+                    if type(immobility_bout_values_slice[idx]) == bool:
+                        immobility_bout_found = True
+                        immobility_bout_idx = end_idx + idx
+                        break
+                    else:
+                        immobility_bout_found = False
+            else:
+                immobility_bout_found = False           
+            if immobility_bout_found == True:
+                immobility_bout_id = self.behavior_df['immobility_bout_id'][immobility_bout_idx]
+                immobility_interval_border_idxs = self._get_interval_border_idxs_from_event_type_and_id(event_type = 'immobility_bout', event_id = immobility_bout_id)
+                gait_disruption_interval_border_idxs.append(immobility_interval_border_idxs)
+        gait_disruption_events = self._create_event_objects(interval_border_idxs = gait_disruption_interval_border_idxs, event_type = 'gait_disruption_bout')
+        return gait_disruption_events
+                
+                
+    def _get_interval_border_idxs_from_event_type_and_id(self, event_type: str, event_id: int) -> Tuple[int, int]:
+        interval_idxs = self.behavior_df.loc[self.behavior_df[f'{event_type}_id'] == event_id].index.values
+        return interval_idxs[0], interval_idxs[-1]
 
-   
-    
-    def _get_low_likelihood_interval_border_idxs(self, likelihood_series: pd.Series, max_interval_length: int, min_likelihood_threshold: float=0.5) -> List[Tuple[int, int]]:
-        all_low_likelihood_idxs = np.where(likelihood_series.values < min_likelihood_threshold)[0]
-        last_idxs_of_idx_intervals = np.where(np.diff(all_low_likelihood_idxs) > 1)[0]
-        all_interval_end_idxs = np.concatenate([last_idxs_of_idx_intervals, np.array([all_low_likelihood_idxs.shape[0] - 1])])
-        all_interval_start_idxs = np.concatenate([np.asarray([0]), last_idxs_of_idx_intervals + 1])
-        interval_lengths = all_interval_end_idxs - all_interval_start_idxs
-        idxs_of_intervals_matching_length_criterion = np.where(interval_lengths <= max_interval_length)[0]
-        selected_interval_start_idxs = all_interval_start_idxs[idxs_of_intervals_matching_length_criterion]
-        selected_interval_end_idxs = all_interval_end_idxs[idxs_of_intervals_matching_length_criterion]
-        interval_border_idxs = []
-        for start_idx, end_idx in zip(selected_interval_start_idxs, selected_interval_end_idxs):
-            border_idxs = (all_low_likelihood_idxs[start_idx], all_low_likelihood_idxs[end_idx])
-            interval_border_idxs.append(border_idxs)
-        return interval_border_idxs
             
         
        
@@ -719,7 +769,8 @@ class EventBout2D():
         self.start_index(int): index of event onset
         self.end_index(int): index of event ending
     """
-    def __init__(self, start_index: int, end_index: int, fps: int, event_type: Optional[str]) -> None:
+    
+    def __init__(self, event_id: int, start_idx: int, end_ix: int, fps: int, event_type: str) -> None:
         """
         Constructor of class EventBout that sets the attributes start_ and end_index.
         
@@ -727,32 +778,13 @@ class EventBout2D():
             start_index(int): index of event onset
             end_index(Optional[int]): index of event ending (if event is not only a single frame)
         """
-        self.start_index = start_index
-        if end_index != None:
-            self.end_index = end_index
-            self.duration = (self.end_index - self.start_index)/fps
-        else:
-            self.end_index = start_index
-            self.duration = 0
-        self._create_dict()
-        self.id = None
-        self.dict['start_index'] = start_index
-
-    @property
-    def freezing_threshold(self) -> float:
-        """ Arbitrary chosen threshold in seconds to check for freezing."""
-        return 1.
-
-    def check_direction(self, facing_towards_open_end: pd.Series)->None:
-        """ 
-        Function, that checks the direction of the mouse at the start_index.
+        self.id = event_id
+        self.event_type = event_type
+        self.start_idx = start_idx
+        self.end_idx = end_idx
+        self.duration = ((self.end_idx + 1) - self.start_idx)/fps
         
-        Parameters:
-            facing_towards_open_end(pandas.Series): Series with boolean values for each frame.
-        """
-        self.facing_towards_open_end = facing_towards_open_end.iloc[self.start_index]
-        self.dict['facing_towards_open_end']=self.facing_towards_open_end
-
+        
     def check_that_freezing_threshold_was_reached(self)->None:
         """
         Function, that calculates the duration of an event and checks, whether it exceeded the freezing_threshold.
@@ -776,12 +808,7 @@ class EventBout2D():
         self.x_position=centerofgravity.df.loc[self.start_index:self.end_index, 'x'].median()
         self.dict['x_position']=self.x_position
 
-    def _create_dict(self)->None:
-        """
-        Function that sets the attribut self.dict as Dictionary.
-        """
-        self.dict = {}
-    
+
 class EventSeries(ABC):
     @property
     def merge_threshold(self)->float:
