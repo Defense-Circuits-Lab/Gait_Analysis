@@ -14,6 +14,7 @@ from scipy.signal import find_peaks, peak_widths
 from statistics import mean
 import cv2
 import pickle
+from scipy.signal import savgol_filter
         
 class RecordingTop(ABC):
     """
@@ -21,7 +22,7 @@ class RecordingTop(ABC):
     
     Attributes:
         full_df_from_file(pandas.DataFrame): the Dataframe containing all bodyparts with x, y-coordinates and likelihood as returned by DLC
-        recorded_framerate(int): fps of the recording
+        fps(int): fps of the recording
         metadata(Dict): dictionary containing information read from the filename, such as animal_id, recording_date and Opening Track paradigm
     """
        
@@ -34,7 +35,7 @@ class RecordingTop(ABC):
         return ['194', '195', '196', '206', '209']
 
     
-    def __init__(self, filepath: Path, recorded_framerate: int)->None:
+    def __init__(self, filepath: Path, fps: int)->None:
         """
         Constructor for the Recording2D class.
         
@@ -42,11 +43,11 @@ class RecordingTop(ABC):
         
         Parameters:
             filepath(pathlib.Path): the filepath to the h5 containing DLC data
-            recorded_framerate(int): fps of the recording
+            fps(int): fps of the recording
         """
         self.filepath = filepath
         self.full_df_from_file = self._get_df_from_file(filepath = filepath)
-        self.recorded_framerate = recorded_framerate
+        self.fps = fps
         self.metadata = self._retrieve_metadata(filepath = filepath.name)
 
 
@@ -98,54 +99,8 @@ class RecordingTop(ABC):
         animal_line, animal_id, recording_date, paradigm, cam_id = filepath_slices[0], filepath_slices[1], filepath_slices[2], filepath_slices[3][0:3], 'Top'
         self._check_metadata(metadata = (animal_line, animal_id, recording_date, paradigm, cam_id))
         return {'recording_date': self.recording_date, 'animal': self.mouse_line + '_' + self.mouse_id, 'paradigm': self.paradigm, 'cam': self.cam_id}
-    
-    
-    def _read_metadata(self, project_config_filepath: Path, recording_config_filepath: Path, video_filepath: Path)->None:
-        with open(project_config_filepath, "r") as ymlfile:
-            project_config = yaml.load(ymlfile, Loader=yaml.SafeLoader)
-        with open(recording_config_filepath,'r') as ymlfile2:
-            recording_config = yaml.load(ymlfile2, Loader=yaml.SafeLoader)
-        for key in ['target_fps', 'valid_cam_IDs', 'paradigms', 'animal_lines', 'intrinsic_calibration_dir', 'led_extraction_type', 'led_extraction_path']:
-            try:
-                project_config[key]
-            except KeyError:
-                raise KeyError(f'Missing metadata information in the project_config_file {project_config_filepath} for {key}.')
-        self.target_fps = project_config['target_fps']
-        self.valid_cam_ids = project_config['valid_cam_IDs']
-        self.valid_paradigms = project_config['paradigms']
-        self.valid_mouse_lines = project_config['animal_lines']
-        self.intrinsic_calibrations_directory = Path(project_config['intrinsic_calibration_dir'])
-        self._extract_filepath_metadata(filepath_name = video_filepath.name)
-        for key in ['led_pattern', self.cam_id]:
-            try:
-                recording_config[key]
-            except KeyError:
-                raise KeyError(f'Missing information for {key} in the config_file {recording_config_filepath}!')
-        self.led_pattern = recording_config['led_pattern']
-        if self.recording_date != recording_config['recording_date']:
-            raise ValueError (f'The date of the recording_config_file {recording_config_filepath} '
-                              f'and the provided video {self.video_filepath} do not match! '
-                              'Did you pass the right config-file and check the filename carefully?')
-        metadata_dict = recording_config[self.cam_id]
-        for key in ['fps', 'offset_row_idx', 'offset_col_idx', 'flip_h', 'flip_v', 'fisheye']:
-            try:
-                metadata_dict[key]
-            except KeyError:
-                raise KeyError(f'Missing metadata information in the recording_config_file {recording_config_filepath} for {self.cam_id} for {key}.')  
-        self.fps = metadata_dict['fps']
-        self.offset_row_idx = metadata_dict['offset_row_idx']
-        self.offset_col_idx = metadata_dict['offset_col_idx']
-        self.flip_h = metadata_dict['flip_h']
-        self.flip_v = metadata_dict['flip_v']
-        self.fisheye = metadata_dict['fisheye']
-        self.processing_type = project_config['processing_type'][self.cam_id]
-        self.calibration_evaluation_type = project_config['calibration_evaluation_type'][self.cam_id]
-        self.processing_path = Path(project_config['processing_path'][self.cam_id])
-        self.calibration_evaluation_path = Path(project_config['calibration_evaluation_path'][self.cam_id])
-        self.led_extraction_type = project_config['led_extraction_type'][self.cam_id]
-        self.led_extraction_path = project_config['led_extraction_path'][self.cam_id]
 
-        
+    
     def _check_metadata(self, metadata = Tuple[str]) -> None: 
         animal_line, animal_id, recording_date, paradigm, cam_id = metadata[0], metadata[1], metadata[2], metadata[3], metadata[4]
         self.cam_id = cam_id
@@ -193,62 +148,166 @@ class RecordingTop(ABC):
                     print(f'Entered recording date has to be an integer in shape YYMMDD. Example: 220812')
         
     
-    def run(self, intrinsic_camera_calibration_filepath: Path)->None:
-        """
-        Function to create Bodypart2D objects for all the tracked markers.
+    def preprocess(self,
+                   marker_ids_to_compute_coverage: List[str]=['TailBase', 'Snout'],
+                   coverage_threshold: float=0.75, 
+                   max_seconds_to_interpolate: float=0.5, 
+                   likelihood_threshold: float=0.5,
+                   marker_ids_to_compute_center_of_gravity: List[str]=['TailBase', 'Snout']
+                   ) -> None:
+        self.log = {'critical_markers': marker_ids_to_compute_coverage,
+                    'coverage_threshold': coverage_threshold,
+                    'max_seconds_to_interpolate': max_seconds_to_interpolate,
+                    'likelihood_threshold': likelihood_threshold,
+                    'center_of_gravity_based_on': marker_ids_to_compute_center_of_gravity}
+        window_length = self._get_max_odd_n_frames_for_time_interval(fps = self.fps, time_interval = max_seconds_to_interpolate)
+        all_marker_ids = self._get_all_unique_marker_ids(df = self.full_df_from_file)
+        relevant_marker_ids = all_marker_ids
+        for marker_id_to_exclude in ['LED5', 'MazeCornerClosedRight', 'MazeCornerClosedLeft', 'MazeCornerOpenRight', 'MazeCornerOpenLeft']:
+            relevant_marker_ids.remove(marker_id_to_exclude)        
+        smoothed_df = self._smooth_tracked_coords_and_likelihood(marker_ids = relevant_marker_ids, window_length = window_length, polyorder = 3)
+        interpolated_df = self._interpolate_low_likelihood_intervals(df = smoothed_df, marker_ids = relevant_marker_ids, max_interval_length = window_length)
+        interpolated_df_with_cog = self._add_new_marker_derived_existing_markers(df = interpolated_df,
+                                                                                 existing_markers = marker_ids_to_compute_center_of_gravity,
+                                                                                 new_marker_id = 'CenterOfGravity',
+                                                                                 likelihood_threshold = likelihood_threshold)
+        preprocessed_df = self._interpolate_low_likelihood_intervals(df = interpolated_df_with_cog,
+                                                                     marker_ids = ['CenterOfGravity'],
+                                                                     max_interval_length = window_length)
         
-        A function is called, that first calculates the centerofgravity and then creates Bodypart objects for all the markers.
-        The points are first undistorted, based on the intrinsic camera calibration, which is adjusted based on the cropping. 
-        Afterwards, the coordinate system is normalized via translation, rotation and conversion to unit cms.
-        Basic parameters for the bodyparts are already calculated, such as, speed and immobility.
-        Currently no frames are excluded.
+        self.log['coverage_critical_markers'] = self._compute_coverage(df = preprocessed_df,
+                                                                         critical_marker_ids = marker_ids_to_compute_coverage,
+                                                                         likelihood_threshold = likelihood_threshold)
+        self.log['coverage_CenterOfGravity'] = self._compute_coverage(df = preprocessed_df,
+                                                                      critical_marker_ids = ['CenterOfGravity'],
+                                                                      likelihood_threshold = likelihood_threshold)
+        if self.log['coverage_critical_markers'] >= coverage_threshold:
+            self.preprocessed_df = preprocessed_df
+            #self._instantiate_all_bodypart_objects()
+            #self._normalize_coordinate_system()
+            #self._run_basic_operations_on_bodyparts()
+            #self._get_tracking_performance()
+        else:
+            print(f'Unfortunately, there was insufficient tracking coverage for {self.filepath.name}. We have to skip this recording!')
+
+
+    def _get_max_odd_n_frames_for_time_interval(self, fps: int, time_interval: 0.5) -> int:
+        assert type(fps) == int, '"fps" has to be an integer!'
+        frames_per_time_interval = fps * time_interval
+        if frames_per_time_interval % 2 == 0:
+            max_odd_frame_count = frames_per_time_interval - 1
+        elif frames_per_time_interval == int(frames_per_time_interval):
+            max_odd_frame_count = frames_per_time_interval
+        else:
+            frames_per_time_interval = int(frames_per_time_interval)
+            if frames_per_time_interval % 2 == 0:
+                max_odd_frame_count = frames_per_time_interval - 1
+            else:
+                max_odd_frame_count = frames_per_time_interval
+        assert max_odd_frame_count > 0, f'The specified time interval is too short to fit an odd number of frames'
+        return int(max_odd_frame_count)                
+
+
+    def _get_all_unique_marker_ids(self, df: pd.DataFrame) -> List[str]:
+        unique_marker_ids = []
+        for column_name in df.columns:
+            marker_id, _ = column_name.split('_')
+            if marker_id not in unique_marker_ids:
+                unique_marker_ids.append(marker_id)
+        return unique_marker_ids
+
+
+    def _smooth_tracked_coords_and_likelihood(self, marker_ids: List[str], window_length: int, polyorder: int=3) -> pd.DataFrame:
+        """
+        Smoothes the DataFrame basically using the implementation from DLC2kinematics:
+        https://github.com/AdaptiveMotorControlLab/DLC2Kinematics/blob/82e7e60e00e0efb3c51e024c05a5640c91032026/src/dlc2kinematics/preprocess.py#L64
+        However, with one key change: likelihoods will also be smoothed.
+        In addition, we will not smooth the columns for the tracked LEDs and the MazeCorners.
         
-        Parameters: #the latter two could be read from the .config file
-            intrinsic_camera_calibration_filepath(Path): pickle file containing intrinsic camera parameters
-            xy_offset(Tuple): cropping offsets of the recorded video
-            video_filepath: path to the recorded video
+        Note: window_length has to be an odd integer!
         """
-        self.log = {}
-        self._calculate_center_of_gravity()
-        K, D = self._load_intrinsic_camera_calibration(intrinsic_camera_calibration_filepath = intrinsic_camera_calibration_filepath)
-        size = (640, 480)
-        self.camera_parameters_for_undistortion = {'K': K, 'D': D, 'size': size}
-        self._create_all_bodyparts()
-        self._normalize_coordinate_system()
-        #self._run_basic_operations_on_bodyparts()
-        #self._get_tracking_performance()
+        smoothed_df = self.full_df_from_file.copy()
+        column_names = self._get_column_names(df = smoothed_df,
+                                              column_identifiers = ['x', 'y', 'likelihood'],
+                                              marker_ids = marker_ids)
+        column_idxs_to_smooth = smoothed_df.columns.get_indexer(column_names)
+        smoothed_df.iloc[:, column_idxs_to_smooth] = savgol_filter(x = smoothed_df.iloc[:, column_idxs_to_smooth],
+                                                                   window_length = window_length,
+                                                                   polyorder = polyorder,
+                                                                   axis = 0)
+        return smoothed_df  
 
 
-    def _calculate_center_of_gravity(self)->None:
-        """
-        Function, that calculates the centerofgravity.
-        
-        The center_of_gravity is calculated using the bodyparts Snout and TailBase. The likelihood is calculated as the multiplied likelihood of Snout and TailBase.
-        It adds centerofgravity to self.full_df_from_file.
-        """
-        self._calculate_new_bodypart(['Snout', 'TailBase'], 'centerofgravity')
+    def _get_column_names(self, df: pd.DataFrame, column_identifiers: List[str], marker_ids: List[str]) -> List[str]:
+        matching_column_names = []
+        for column_name in df.columns:
+            marker_id, column_identifier = column_name.split('_')
+            if (marker_id in marker_ids) and (column_identifier in column_identifiers):
+                matching_column_names.append(column_name)
+        return matching_column_names
 
 
-    def _calculate_new_bodypart(self, bodyparts: List[str], label: str)->None:
+    def _interpolate_low_likelihood_intervals(self, df: pd.DataFrame, marker_ids: List[str], max_interval_length: int) -> pd.DataFrame:
+        interpolated_df = df.copy()
+        for marker_id in marker_ids:
+            low_likelihood_interval_border_idxs = self._get_low_likelihood_interval_border_idxs(likelihood_series = interpolated_df[f'{marker_id}_likelihood'], 
+                                                                                                max_interval_length = max_interval_length)
+            for start_idx, end_idx in low_likelihood_interval_border_idxs:
+                if (start_idx - 1 >= 0) and (end_idx + 2 < interpolated_df.shape[0]):
+                    interpolated_df[f'{marker_id}_x'][start_idx - 1 : end_idx + 2] = interpolated_df[f'{marker_id}_x'][start_idx - 1 : end_idx + 2].interpolate()
+                    interpolated_df[f'{marker_id}_y'][start_idx - 1 : end_idx + 2] = interpolated_df[f'{marker_id}_y'][start_idx - 1 : end_idx + 2].interpolate()
+                    interpolated_df[f'{marker_id}_likelihood'][start_idx : end_idx + 1] = 0.5
+        return interpolated_df    
+
+
+    def _get_low_likelihood_interval_border_idxs(self, likelihood_series: pd.Series, max_interval_length: int, min_likelihood_threshold: float=0.5) -> List[Tuple[int, int]]:
+        all_low_likelihood_idxs = np.where(likelihood_series.values < min_likelihood_threshold)[0]
+        last_idxs_of_idx_intervals = np.where(np.diff(all_low_likelihood_idxs) > 1)[0]
+        all_interval_end_idxs = np.concatenate([last_idxs_of_idx_intervals, np.array([all_low_likelihood_idxs.shape[0] - 1])])
+        all_interval_start_idxs = np.concatenate([np.asarray([0]), last_idxs_of_idx_intervals + 1])
+        interval_lengths = all_interval_end_idxs - all_interval_start_idxs
+        idxs_of_intervals_matching_length_criterion = np.where(interval_lengths <= max_interval_length)[0]
+        selected_interval_start_idxs = all_interval_start_idxs[idxs_of_intervals_matching_length_criterion]
+        selected_interval_end_idxs = all_interval_end_idxs[idxs_of_intervals_matching_length_criterion]
+        interval_border_idxs = []
+        for start_idx, end_idx in zip(selected_interval_start_idxs, selected_interval_end_idxs):
+            border_idxs = (all_low_likelihood_idxs[start_idx], all_low_likelihood_idxs[end_idx])
+            interval_border_idxs.append(border_idxs)
+        return interval_border_idxs
+
+
+    def _add_new_marker_derived_existing_markers(self, df: pd.DataFrame, existing_markers: List[str], new_marker_id: str, likelihood_threshold: float = 0.5)->None:
+        df_with_new_marker = df.copy()
         for coordinate in ['x', 'y']:
-            self.full_df_from_file[f'{label}_{coordinate}'] = (sum([self.full_df_from_file[f'{bp}_{coordinate}'] for bp in bodyparts]))/len(bodyparts)
-        self.full_df_from_file[f'{label}_likelihood'] = np.prod([self.full_df_from_file[f'{bp}_likelihood'] for bp in bodyparts], axis = 0) 
-
-    
-    def _load_intrinsic_camera_calibration(self, intrinsic_camera_calibration_filepath: Path) -> Tuple[np.array, np.array]:
-        """
-        This function opens the camera calibration from the pickle file and adjusts it based on the cropping parameters.
+            df_with_new_marker[f'{new_marker_id}_{coordinate}'] = (sum([df_with_new_marker[f'{marker_id}_{coordinate}'] for marker_id in existing_markers]))/len(existing_markers)
+        df_with_new_marker[f'{new_marker_id}_likelihood'] = 0
+        row_idxs_where_all_likelihoods_exceeded_threshold = self._get_idxs_where_all_markers_exceed_likelihood(df = df_with_new_marker, 
+                                                                                                           marker_ids = existing_markers, 
+                                                                                                           likelihood_threshold = 0.5)
+        df_with_new_marker.iloc[row_idxs_where_all_likelihoods_exceeded_threshold, -1] = 1
+        return df_with_new_marker
         
-        Parameters:
-            intrinsic_camera_calibration_filepath(Path): pickle file containing intrinsic camera parameters
-            x_offset(int): cropping offset x of the recorded video
-            y_offset(int): cropping offset y of the recorded video
-        Returns:
-            Tuple: the camera matrix K and the distortion coefficient D as np.array
-        """
-        with open(intrinsic_camera_calibration_filepath, 'rb') as io:
-            intrinsic_calibration = pickle.load(io)
-        return intrinsic_calibration['K'], intrinsic_calibration['D']
+
+    def _get_idxs_where_all_markers_exceed_likelihood( self, df: pd.DataFrame, marker_ids: List[str], likelihood_threshold: float=0.5) -> np.ndarray:
+        valid_idxs_per_marker_id = []
+        for marker_id in marker_ids:
+            valid_idxs_per_marker_id.append(df.loc[df[f'{marker_id}_likelihood'] >= likelihood_threshold].index.values)
+        shared_valid_idxs_for_all_markers = valid_idxs_per_marker_id[0]
+        if len(valid_idxs_per_marker_id) > 1:
+            for i in range(1, len(valid_idxs_per_marker_id)):
+                shared_valid_idxs_for_all_markers = np.intersect1d(shared_valid_idxs_for_all_markers, valid_idxs_per_marker_id[i])
+        return shared_valid_idxs_for_all_markers
+
+            
+    def _compute_coverage(self, df: pd.DataFrame, critical_marker_ids: List[str], likelihood_threshold: float=0.5) -> float:
+        idxs_where_all_markers_exceed_likelihood_threshold = self._get_idxs_where_all_markers_exceed_likelihood(df = df, 
+                                                                                                                marker_ids = critical_marker_ids,
+                                                                                                                likelihood_threshold = likelihood_threshold)
+        return idxs_where_all_markers_exceed_likelihood_threshold.shape[0] / df.shape[0]
+        
+        
+
+        
 
 
     def _create_all_bodyparts(self)->None:
@@ -546,11 +605,11 @@ class Bodypart2D():
         df.loc[:, ('x', 'y')]*=conversion_factor
         return df
         
-    def run_basic_operations(self, recorded_framerate: int)->None:
+    def run_basic_operations(self, fps: int)->None:
         """
         Function that calculates Speed and Immobility.
         """
-        self._get_speed(recorded_framerate = recorded_framerate)
+        self._get_speed(fps = fps)
         self._get_rolling_speed()
         self._get_immobility()
         
@@ -580,7 +639,7 @@ class Bodypart2D():
         marker_detected_per_total_frames = self.df.loc[start_end_index[0]:start_end_index[1], :].loc[self.df['likelihood']>self.dlc_likelihood_threshold, :].shape[0]/self.df.loc[start_end_index[0]:start_end_index[1], :].shape[0]
         return marker_detected_per_total_frames
     
-    def _get_speed(self, recorded_framerate: int)->None:
+    def _get_speed(self, fps: int)->None:
         """
         Function, that calculates the speed of the bodypart, based on the framerate.
         
@@ -588,10 +647,10 @@ class Bodypart2D():
         as the squareroot of the squared difference between two frames in -x and -y dimension divided by the duration of a frame.
         
         Parameters:
-            recorded_framerate(int): fps of the recording
+            fps(int): fps of the recording
         """
         self.df.loc[:, 'speed_cm_per_s'] = np.NaN
-        self.df.loc[:, 'speed_cm_per_s'] = (np.sqrt(self.df.loc[:, 'x'].diff()**2 + self.df.loc[:, 'y'].diff()**2)) / (1/recorded_framerate)        
+        self.df.loc[:, 'speed_cm_per_s'] = (np.sqrt(self.df.loc[:, 'x'].diff()**2 + self.df.loc[:, 'y'].diff()**2)) / (1/fps)        
     
     
     def _get_rolling_speed(self)->None:
@@ -669,7 +728,7 @@ class EventBout2D():
         self.start_index(int): index of event onset
         self.end_index(int): index of event ending
     """
-    def __init__(self, start_index: int, end_index: Optional[int]=None, recorded_framerate: Optional[int]=None)->None:
+    def __init__(self, start_index: int, end_index: Optional[int]=None, fps: Optional[int]=None)->None:
         """
         Constructor of class EventBout that sets the attributes start_ and end_index.
         
@@ -680,7 +739,7 @@ class EventBout2D():
         self.start_index = start_index
         if end_index != None:
             self.end_index = end_index
-            self.duration = (self.end_index - self.start_index)/recorded_framerate
+            self.duration = (self.end_index - self.start_index)/fps
         else:
             self.end_index = start_index
             self.duration = 0
@@ -708,7 +767,7 @@ class EventBout2D():
         Function, that calculates the duration of an event and checks, whether it exceeded the freezing_threshold.
         
         Parameters:
-            recorded_framerate(int): fps of the recording
+            fps(int): fps of the recording
         """
         self.freezing_threshold_reached = False
         if self.duration > self.freezing_threshold:
@@ -739,26 +798,26 @@ class EventSeries(ABC):
         return 0.2
     
     
-    def __init__(self, range_end: int, events: List, event_type: str, recorded_framerate: int, range_start: int = 0):
-        self.events = self._merge_events(events = events, recorded_framerate = recorded_framerate)
+    def __init__(self, range_end: int, events: List, event_type: str, fps: int, range_start: int = 0):
+        self.events = self._merge_events(events = events, fps = fps)
         self.event_type = event_type
         
-    def _merge_events(self, events: List, recorded_framerate:int)->List:
+    def _merge_events(self, events: List, fps:int)->List:
         events_to_keep = []  
         for i in range(len(events)-1):
             try:
                 events[i+1]
             except IndexError:
                 break
-            if ((events[i+1].start_index - events[i].end_index)/recorded_framerate) < self.merge_threshold:
+            if ((events[i+1].start_index - events[i].end_index)/fps) < self.merge_threshold:
                 j = i + 1
                 try: 
                     events[j+1]
-                    while ((events[j].start_index - events[i].end_index)/recorded_framerate) < self.merge_threshold:
+                    while ((events[j].start_index - events[i].end_index)/fps) < self.merge_threshold:
                         j += 1
                 except IndexError: 
                     j -= 1
-                events_to_keep.append(EventBout2D(start_index = events[i].start_index, end_index = events[j].end_index, recorded_framerate=recorded_framerate))
+                events_to_keep.append(EventBout2D(start_index = events[i].start_index, end_index = events[j].end_index, fps=fps))
                 for n in range(i, j):
                     try:
                         events.pop(n+1)
