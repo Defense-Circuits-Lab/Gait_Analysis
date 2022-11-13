@@ -191,8 +191,6 @@ class RecordingTop(ABC):
             self.bodyparts = self._create_bodypart_objects()
             self.log['normalization_parameters'] = normalization_params
             self.log['normalized_maze_corner_coordinates'] = self._get_normalized_maze_corners(normalization_parameters = normalization_params)
-            #self._run_basic_operations_on_bodyparts()
-            #self._get_tracking_performance()
         else:
             print(f'Unfortunately, there was insufficient tracking coverage for {self.filepath.name}. We have to skip this recording!')
 
@@ -522,7 +520,7 @@ class RecordingTop(ABC):
     def _create_bodypart_objects(self) -> Dict:
         bodyparts = {}
         for marker_id in self._get_all_unique_marker_ids(df = self.normalized_df):
-            bodyparts[marker_id] = Bodypart2D(bodypart_id = marker_id, df = self.normalized_df)
+            bodyparts[marker_id] = Bodypart2D(bodypart_id = marker_id, df = self.normalized_df, fps = self.fps)
         return bodyparts
 
 
@@ -532,7 +530,90 @@ class RecordingTop(ABC):
         for corner_marker_id in corners.keys():
             normalized_maze_corner_coordinates[corner_marker_id] = corners[corner_marker_id]['coords']
         return normalized_maze_corner_coordinates
+    
+    
+    def run_behavioral_analyses(self,
+                                immobility_max_rolling_speed: float=2.0,
+                                bodyparts_critical_for_freezing: List[str]=['Snout', 'CenterOfGravity'],
+                                freezing_min_time: float=0.5,
+                                bodyparts_for_direction_front_to_back: List[str]=['Snout', 'CenterOfGravity'],
+                                gait_min_rolling_speed: float=4.0,
+                                gait_min_duration: float=1.0,
+                                gait_disruption_min_time: float=0.2,
+                                merge_events_max_inbetween_time: float=0.15
+                               ) -> None:
+        sliding_window_size = int(round(self._get_max_odd_n_frames_for_time_interval(fps = self.fps, time_interval = 0.5) / 2, 0))
+        for bodypart in self.bodyparts.values():
+            bodypart.calculate_speed_and_identify_immobility(sliding_window_size = sliding_window_size, immobility_threshold = immobility_max_rolling_speed)
+        self.behavior_df = pd.DataFrame(data = {'facing_towards_open_end': [False]*self.normalized_df.shape[0]})
+        self._add_immobility_of_all_critical_bodyparts_to_behavior_df(bodyparts_critical_for_freezing = bodyparts_critical_for_freezing)
+        self._add_orientation_to_behavior_df(bodyparts_for_direction_front_to_back = bodyparts_for_direction_front_to_back)
+        
+        
 
+        
+        self.log['rolling_speed_sliding_window_size'] = sliding_window_size
+        self.log['bodyparts_for_direction_front_to_back'] = bodyparts_for_direction_front_to_back
+        self.log['immobility_max_rolling_speed'] = immobility_max_rolling_speed
+        self.log['gait_min_rolling_speed'] = gait_min_rolling_speed
+        self.log['gait_min_duration'] = gait_min_duration
+        self.log['gait_disruption_min_time'] = gait_disruption_min_time
+        self.log['freezing_min_time'] = freezing_min_time
+        self.log['merge_events_max_inbetween_time'] = merge_events_max_inbetween_time
+ 
+
+    def _add_immobility_of_all_critical_bodyparts_to_behavior_df(self, bodyparts_critical_for_freezing: List[str]) ->:
+        # very similar to 
+        # can they be combined? different operators for check, though
+        valid_idxs_per_marker_id = []
+        for bodypart_id in bodyparts_critical_for_freezing:
+            tmp_df = self.bodyparts[bodypart_id].df.copy()
+            valid_idxs_per_marker_id.append(tmp_df.loc[tmp_df['immobility'] == True].index.values)
+        shared_valid_idxs_for_all_markers = valid_idxs_per_marker_id[0]
+        if len(valid_idxs_per_marker_id) > 1:
+            for i in range(1, len(valid_idxs_per_marker_id)):
+                shared_valid_idxs_for_all_markers = np.intersect1d(shared_valid_idxs_for_all_markers, valid_idxs_per_marker_id[i])
+        self.behavior_df.iloc[shared_valid_idxs_for_all_markers, 'immobility'] = True
+
+        
+    def _add_freezing_bouts_to_behavior_df(self, freezing_min_time: float) -> None:
+        idxs_immobility_state_changes np.where(self.behavior_df['immobility'].diff().values == True)[0]
+        freezing_interval_borders = []
+        all_bout_start_idxs = np.concatenate([np.array([0]), idxs_immobility_state_changes])
+        all_bout_end_idxs = np.concatenate([idxs_immobility_state_changes, np.array([idxs_immobility_state_changes.shape[0]])])
+        immobility_events = []
+        for start_idx, end_idx in zip(all_bout_start_idxs, all_bout_end_idxs):
+            if all(self.behavior_df.iloc[start_idx : end_idx, :]['immobility'].values):
+                immobility_events.append(EventBout2D(start_index = start_idx, end_idx = end_ixs, fps = self.fps, event_type = 'freezing'))
+                # continue here
+        
+        
+
+    def _add_orientation_to_behavior_df(self, bodyparts_for_direction_front_to_back: List[str]) -> None:
+        assert len(bodyparts_for_direction_front_to_back) ==2, '"bodyparts_for_direction_front_to_back" must be a list of exact 2 marker_ids!'
+        front_marker_id = bodyparts_for_direction_front_to_back[0]
+        back_marker_id = bodyparts_for_direction_front_to_back[1]
+        self.behavior_df.loc[self.bodyparts[front_marker_id].df['x'] > self.bodyparts[back_marker_id].df['x'], 'facing_towards_open_end'] = True
+    
+
+   
+    
+    def _get_low_likelihood_interval_border_idxs(self, likelihood_series: pd.Series, max_interval_length: int, min_likelihood_threshold: float=0.5) -> List[Tuple[int, int]]:
+        all_low_likelihood_idxs = np.where(likelihood_series.values < min_likelihood_threshold)[0]
+        last_idxs_of_idx_intervals = np.where(np.diff(all_low_likelihood_idxs) > 1)[0]
+        all_interval_end_idxs = np.concatenate([last_idxs_of_idx_intervals, np.array([all_low_likelihood_idxs.shape[0] - 1])])
+        all_interval_start_idxs = np.concatenate([np.asarray([0]), last_idxs_of_idx_intervals + 1])
+        interval_lengths = all_interval_end_idxs - all_interval_start_idxs
+        idxs_of_intervals_matching_length_criterion = np.where(interval_lengths <= max_interval_length)[0]
+        selected_interval_start_idxs = all_interval_start_idxs[idxs_of_intervals_matching_length_criterion]
+        selected_interval_end_idxs = all_interval_end_idxs[idxs_of_intervals_matching_length_criterion]
+        interval_border_idxs = []
+        for start_idx, end_idx in zip(selected_interval_start_idxs, selected_interval_end_idxs):
+            border_idxs = (all_low_likelihood_idxs[start_idx], all_low_likelihood_idxs[end_idx])
+            interval_border_idxs.append(border_idxs)
+        return interval_border_idxs
+            
+        
        
                 
 class Bodypart2D():
@@ -550,9 +631,9 @@ class Bodypart2D():
                               'max_x': 55,
                               'min_y': -3,
                               'max_y': 7}
-        
+
     
-    def __init__(self, bodypart_id: str, df: pd.DataFrame)->None:
+    def __init__(self, bodypart_id: str, df: pd.DataFrame, fps: int)->None:
         """ 
         Constructor for class Bodypart. 
         
@@ -564,7 +645,9 @@ class Bodypart2D():
         self.id = bodypart_id
         sliced_df = self._slice_df(df = df)
         self.df = self._apply_exclusion_criteria(df = sliced_df, exclusion_criteria = self.exclusion_criteria)
-        
+        self.fps = fps
+        self.framerate = 1/fps
+
         
     def _slice_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -578,15 +661,6 @@ class Bodypart2D():
                 'y': df_input.loc[:, f'{self.id}_y'], 
                 'likelihood': df_input.loc[:, f'{self.id}_likelihood']}
         return pd.DataFrame(data = data)
-    
-        
-    def run_basic_operations(self, fps: int)->None:
-        """
-        Function that calculates Speed and Immobility.
-        """
-        self._get_speed(fps = fps)
-        self._get_rolling_speed()
-        self._get_immobility()
         
         
     def _apply_exclusion_criteria(self, df: pd.DataFrame, exclusion_criteria: Dict) -> None:
@@ -595,106 +669,28 @@ class Bodypart2D():
             df.loc[df[coord] < exclusion_criteria[f'min_{coord}'], :] = np.nan
             df.loc[df[coord] > exclusion_criteria[f'max_{coord}'], :] = np.nan
         return df
-    
-            
-    def _interpolate_low_likelihood_frames(self) -> None:
-        try:
-            self.df = self.df.interpolate(limit = 10, method = 'slinear', order=1)
-        except ValueError:
-            pass
-        
-    def check_tracking_stability(self, start_end_index: Optional[Tuple]=(0, None))->float:
-        """
-        Function, that calculates the percentage of frames, in which the marker was detected with high likelihood.
-        
-        Parameters:
-            start_end_index: range in which the percentage of detected labels above the likelihood threshold should be calculated. If no values are passed, the percentage over the total session is returned.
-        
-        Returns:
-            marker_detected_per_total_frames(float)
-        """
-        marker_detected_per_total_frames = self.df.loc[start_end_index[0]:start_end_index[1], :].loc[self.df['likelihood']>self.dlc_likelihood_threshold, :].shape[0]/self.df.loc[start_end_index[0]:start_end_index[1], :].shape[0]
-        return marker_detected_per_total_frames
-    
-    def _get_speed(self, fps: int)->None:
-        """
-        Function, that calculates the speed of the bodypart, based on the framerate.
-        
-        After creating an empty column with np.NaN values, the speed is calculated 
-        as the squareroot of the squared difference between two frames in -x and -y dimension divided by the duration of a frame.
-        
-        Parameters:
-            fps(int): fps of the recording
-        """
-        self.df.loc[:, 'speed_cm_per_s'] = np.NaN
-        self.df.loc[:, 'speed_cm_per_s'] = (np.sqrt(self.df.loc[:, 'x'].diff()**2 + self.df.loc[:, 'y'].diff()**2)) / (1/fps)        
-    
-    
-    def _get_rolling_speed(self)->None:
-        """
-        Function, that applies a sliding window of the size 5 on the speed.
-        """
-        self.df.loc[:, 'rolling_speed_cm_per_s'] = np.NaN
-        self.df.loc[:, 'rolling_speed_cm_per_s'] = self.df.loc[:, 'speed_cm_per_s'].rolling(5, min_periods=3, center=True).mean()
 
-    @property
-    def immobility_threshold(self) -> float:
-        """ Arbitrary chosen threshold in cm per s for defining immobility."""
-        return 4.
+        
+    def calculate_speed_and_identify_immobility(self, sliding_window_size: int, immobility_threshold: float) -> None:
+        self._add_speed_to_df()
+        self._add_rolling_speed_to_df(sliding_window_size = sliding_window_size)
+        self._add_immobility_to_df(immobility_threshold = immobility_threshold)
     
-    @property
-    def dlc_likelihood_threshold(self)->float:
-        """ Threshold for likelihood of DLC labels. Values above are considered as good trackings. """
-        return 0.6
     
-    def _get_immobility(self)->None:
-        """
-        Function, that checks frame by frame, whether the rolling_speed of the bodypart is below the immobility threshold.
-        """
+    def _add_speed_to_df(self)->None:
+        self.df.loc[:, 'speed_cm_per_s'] = (self.df.loc[:, 'x'].diff()**2 + self.df.loc[:, 'y'].diff()**2)**0.5 / self.framerate              
+        
+    
+    def _add_rolling_speed_to_df(self, sliding_window_size: int) -> None:
+        min_periods = int(sliding_window_size * 0.66)
+        self.df.loc[:, 'rolling_speed_cm_per_s'] = self.df.loc[:, 'speed_cm_per_s'].rolling(sliding_window_size, min_periods = min_periods, center = True).mean()
+
+    
+    def _add_immobility_to_df(self, immobility_threshold: float) -> None:
         self.df.loc[:, 'immobility'] = False
-        self.df.loc[self.df['rolling_speed_cm_per_s'] < self.immobility_threshold, 'immobility'] = True     
-        
-    def _detect_steps(self)->None:
-        """
-        Function, that detects steps as peaks in the speed based on scipy find_peaks.
-        """
-        speed = self.df["speed_cm_per_s"].copy()
-        peaks = find_peaks(speed, prominence=50)
-        steps_per_paw = self._create_steps(steps=peaks[0])
-        return steps_per_paw
-            
-        
-    def _create_steps(self, steps: List)->List['Step']:
-        """
-        Function, that creates Step objects for every speed peak inside of a gait event.
-        
-        Parameters:
-            List with start_indices for steps.
-            
-        Returns:
-            List with Step elements.
-        """
-        return [Step(paw = self.id, start_index = step_index) for step_index in steps]
-   
-    def _undistort_points(self, camera_parameters_for_undistortion: Dict)->None:
-        """
-        Function that undistort the coordinates of the tracked points based on the camera intrinsics.
-        
-        The undistorted coordinates are stored as self.df_undistort attribute.
-        understanding the maths behind it: https://yangyushi.github.io/code/2020/03/04/opencv-undistort.html
-        
-        Parameters:
-            camera_parameters_for_undistortion(Dict): storage for intrinsic camera parameters K and D and the size of the recorded video
-        """
-        points = self.df_raw[['x', 'y']].copy().values
-        new_K, _ = cv2.getOptimalNewCameraMatrix(camera_parameters_for_undistortion['K'], camera_parameters_for_undistortion['D'], camera_parameters_for_undistortion['size'], 1, camera_parameters_for_undistortion['size'])
-        points_undistorted = cv2.undistortPoints(points, camera_parameters_for_undistortion['K'], camera_parameters_for_undistortion['D'], None, new_K)
-        points_undistorted = np.squeeze(points_undistorted)
-        self.df_undistort = pd.DataFrame()
-        self.df_undistort[['x', 'y']] = points_undistorted
-        self.df_undistort['likelihood'] = self.df_raw['likelihood']
+        self.df.loc[self.df['rolling_speed_cm_per_s'] < immobility_threshold, 'immobility'] = True     
 
-    
+
 
 class EventBout2D():
     """
@@ -705,7 +701,7 @@ class EventBout2D():
         self.start_index(int): index of event onset
         self.end_index(int): index of event ending
     """
-    def __init__(self, start_index: int, end_index: Optional[int]=None, fps: Optional[int]=None)->None:
+    def __init__(self, start_index: int, end_index: int, fps: int, event_type: Optional[str]) -> None:
         """
         Constructor of class EventBout that sets the attributes start_ and end_index.
         
