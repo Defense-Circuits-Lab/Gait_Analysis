@@ -546,8 +546,14 @@ class RecordingTop(ABC):
         for bodypart in self.bodyparts.values():
             bodypart.calculate_speed_and_identify_immobility(sliding_window_size = sliding_window_size, immobility_threshold = immobility_max_rolling_speed)
         self.behavior_df = pd.DataFrame(data = {'facing_towards_open_end': [False]*self.normalized_df.shape[0]})
-        self._add_immobility_of_all_critical_bodyparts_to_behavior_df(bodyparts_critical_for_freezing = bodyparts_critical_for_freezing)
         self._add_orientation_to_behavior_df(bodyparts_for_direction_front_to_back = bodyparts_for_direction_front_to_back)
+        self._add_immobility_of_all_critical_bodyparts_to_behavior_df(bodyparts_critical_for_freezing = bodyparts_critical_for_freezing)
+        freezing_events = self._get_all_immobility_dependent_events(min_interval_duration_in_s = freezing_min_time, event_type = 'freezing')
+        self._add_event_bouts_to_behavior_df(events = freezing_events)
+        potential_gait_disruption_events = self._get_all_immobility_dependent_events(min_interval_duration_in_s = gait_disruption_min_time, event_type = 'gait_disruption')
+        gait_disruption_events = self._filter_events(events = potential_gait_disruption_events,
+                                                     filter_column_name = 'gait'
+
         
         
 
@@ -575,18 +581,30 @@ class RecordingTop(ABC):
                 shared_valid_idxs_for_all_markers = np.intersect1d(shared_valid_idxs_for_all_markers, valid_idxs_per_marker_id[i])
         self.behavior_df.iloc[shared_valid_idxs_for_all_markers, 'immobility'] = True
 
-        
-    def _add_freezing_bouts_to_behavior_df(self, freezing_min_time: float) -> None:
+    
+    def _get_all_immobility_dependent_events(self, min_interval_duration_in_s: float, event_type: str) -> List[EventBout2D]:
         idxs_immobility_state_changes np.where(self.behavior_df['immobility'].diff().values == True)[0]
-        freezing_interval_borders = []
         all_bout_start_idxs = np.concatenate([np.array([0]), idxs_immobility_state_changes])
         all_bout_end_idxs = np.concatenate([idxs_immobility_state_changes, np.array([idxs_immobility_state_changes.shape[0]])])
-        immobility_events = []
+        immobility_events_matching_duration_criterion = []
+        event_id = 0
         for start_idx, end_idx in zip(all_bout_start_idxs, all_bout_end_idxs):
-            if all(self.behavior_df.iloc[start_idx : end_idx, :]['immobility'].values):
-                immobility_events.append(EventBout2D(start_index = start_idx, end_idx = end_ixs, fps = self.fps, event_type = 'freezing'))
-                # continue here
-        
+            if (end_idx - start_idx) >= self.fps*min_interval_duration_in_s:
+                assert all(self.behavior_df.iloc[start_idx : end_idx, :]['immobility'].values), 'Not all values were True!'
+                immobility_event = EventBout2D(event_id = event_id, start_index = start_idx, end_idx = end_ix, fps = self.fps, event_type = event_type)
+                immobility_events_matching_duration_criterion.append(immobility_event)
+                event_id += 1
+        return immobility_events_matching_duration_criterion
+    
+    
+    def _add_event_bouts_to_behavior_df(self, events: List[EventBout2D]) -> None:
+        assert events[0].event_type not in list(self.behavior_df.columns), f'{events[0].event_type} was already a column in self.behavior_df!'
+        self.behavior_df[events[0].event_type] = np.nan
+        self.behavior_df[f'{events[0].event_type}_bout_id'] = np.nan
+        for event_id, event_bout in enumerate(events):
+            # do we need to add +1 to the end_idx?
+            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx, -2] = True
+            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx, -1] = event_id
         
 
     def _add_orientation_to_behavior_df(self, bodyparts_for_direction_front_to_back: List[str]) -> None:
