@@ -1,19 +1,30 @@
+from typing import Tuple, List, Dict, Optional, Union
+from pathlib import Path, PosixPath
+import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import math
-from typing import Tuple, List, Dict, Optional, Union
-from pathlib import Path, PosixPath
-import os
-import imageio.v3 as iio
-from scipy.spatial.transform import Rotation
-from scipy import interpolate
-from scipy.linalg import norm
-from scipy.signal import find_peaks, peak_widths
-from statistics import mean
-import cv2
-import pickle
+from tqdm import tqdm
 from scipy.signal import savgol_filter
+
+
+def process_all_dlc_tracking_h5s_with_default_settings(input_directory_with_dlc_tracking_files: Path,
+                                                       week_id: int,
+                                                       output_directory_to_save_results: Path) -> None:
+    filepaths_dlc_unfiltered_h5_trackings = []
+    for filepath in input_directory_with_dlc_tracking_files.iterdir():
+        if filepath.name.endswith('.h5'):
+            if 'filtered' not in filepath.name:
+                filepaths_dlc_unfiltered_h5_trackings.append(filepath)
+    for filepath in tqdm(filepaths_dlc_unfiltered_h5_trackings):
+        recording = RecordingTop(filepath = filepath, week_id = week_id)
+        if recording.df_successfully_loaded:
+            recording.preprocess()
+            if recording.logs['coverage_critical_markers'] >= recording.logs['coverage_threshold']: 
+                recording.run_behavioral_analyses()
+                recording.export_results(out_dir_path = output_directory_to_save_results)
+                recording.inspect_processing()
+
 
 
 class EventBout2D():
@@ -83,13 +94,14 @@ class RecordingTop():
         assert week_id in self.valid_recording_weeks, f'"week_id" = {week_id} is not listed in "valid_recording_weeks": {self.valid_recording_weeks}'
         self.filepath = filepath
         self.week_id = week_id
-        self.full_df_from_file = self._get_df_from_file(filepath = filepath)
-        self.fps = self._get_correct_fps()
-        self.framerate = 1/self.fps
-        self.metadata = self._retrieve_metadata(filename = filepath.name)
+        self.df_successfully_loaded, self.full_df_from_file = self._attempt_loading_df_from_file(filepath = filepath)
+        if self.df_successfully_loaded:
+            self.fps = self._get_correct_fps()
+            self.framerate = 1/self.fps
+            self.metadata = self._retrieve_metadata(filename = filepath.name)
         
         
-    def _get_df_from_file(self, filepath: Path)->pd.DataFrame:
+    def _attempt_loading_df_from_file(self, filepath: Path) -> Tuple[bool, Optional[pd.DataFrame]]:
         """
         Reads the Dataframe from the h5-file and drops irrelevant columns and rows.
         
@@ -98,28 +110,28 @@ class RecordingTop():
         Returns:
             pandas.DataFrame: the Dataframe containing all bodyparts with x, y-coordinates and likelihood as returned by DLC
         """
-        if filepath.name.endswith('.csv'):
-            df = pd.read_csv(filepath, low_memory = False)
-            df = df.drop('scorer', axis=1)
-            df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
-            df = df.drop([0, 1], axis=0)
-            df = df.reset_index()
-            df = df.drop('index', axis=1)
-            df = df.astype(float)
-        elif filepath.name.endswith('.h5'):
-            df = pd.read_hdf(filepath)
-            try:
+        assert filepath.name.endswith('.csv') or filepath.name.endswith('.h5'), 'The filepath you specified is not referring to a .csv or a .h5 file!'
+        try:
+            if filepath.name.endswith('.csv'):
+                df = pd.read_csv(filepath, low_memory = False)
                 df = df.drop('scorer', axis=1)
                 df.columns = df.iloc[0, :]+ '_' + df.iloc[1, :]
                 df = df.drop([0, 1], axis=0)
                 df = df.reset_index()
                 df = df.drop('index', axis=1)
-            except KeyError:
-                pass
-            df = df.astype(float)
-        else:
-            raise ValueError('The Path you specified is not linking to a .csv/.h5-file!')
-        return df
+                df = df.astype(float)
+            else:
+                df = pd.read_hdf(filepath)
+                target_column_names = []
+                for marker_id, data_id in zip(df.columns.get_level_values(1), df.columns.get_level_values(2)):
+                    target_column_names.append(f'{marker_id}_{data_id}') 
+                df.columns = target_column_names
+                df = df.astype(float)
+            successfully_loaded = True
+        except:
+            successfully_loaded = False
+            df = None
+        return successfully_loaded, df
     
 
     def _get_correct_fps(self) -> int:
@@ -328,19 +340,38 @@ class RecordingTop():
 
     def _get_low_likelihood_interval_border_idxs(self, likelihood_series: pd.Series, max_interval_length: int, min_likelihood_threshold: float=0.5) -> List[Tuple[int, int]]:
         all_low_likelihood_idxs = np.where(likelihood_series.values < min_likelihood_threshold)[0]
-        last_idxs_of_idx_intervals = np.where(np.diff(all_low_likelihood_idxs) > 1)[0]
-        all_interval_end_idxs = np.concatenate([last_idxs_of_idx_intervals, np.array([all_low_likelihood_idxs.shape[0] - 1])])
-        all_interval_start_idxs = np.concatenate([np.asarray([0]), last_idxs_of_idx_intervals + 1])
-        interval_lengths = all_interval_end_idxs - all_interval_start_idxs
-        idxs_of_intervals_matching_length_criterion = np.where(interval_lengths <= max_interval_length)[0]
-        selected_interval_start_idxs = all_interval_start_idxs[idxs_of_intervals_matching_length_criterion]
-        selected_interval_end_idxs = all_interval_end_idxs[idxs_of_intervals_matching_length_criterion]
+        short_low_likelihood_interval_border_idxs = self._get_interval_border_idxs(all_matching_idxs = all_low_likelihood_idxs,
+                                                                                   max_interval_duration = max_interval_length*self.framerate)
+        return short_low_likelihood_interval_border_idxs
+       
+    
+    def _get_interval_border_idxs(self,
+                                  all_matching_idxs: np.ndarray, 
+                                  min_interval_duration: Optional[float]=None, 
+                                  max_interval_duration: Optional[float]=None,
+                                 ) -> List[Tuple[int, int]]:
         interval_border_idxs = []
-        for start_idx, end_idx in zip(selected_interval_start_idxs, selected_interval_end_idxs):
-            border_idxs = (all_low_likelihood_idxs[start_idx], all_low_likelihood_idxs[end_idx])
-            interval_border_idxs.append(border_idxs)
-        return interval_border_idxs
-
+        if all_matching_idxs.shape[0] >= 1:
+            step_idxs = np.where(np.diff(all_matching_idxs) > 1)[0]
+            step_end_idxs = np.concatenate([step_idxs, np.array([all_matching_idxs.shape[0] - 1])])
+            step_start_idxs = np.concatenate([np.array([0]), step_idxs + 1])
+            interval_start_idxs = all_matching_idxs[step_start_idxs]
+            interval_end_idxs = all_matching_idxs[step_end_idxs]
+            for start_idx, end_idx in zip(interval_start_idxs, interval_end_idxs):
+                interval_frame_count = (end_idx+1) - start_idx
+                interval_duration = interval_frame_count * self.framerate          
+                if (min_interval_duration != None) and (max_interval_duration != None):
+                    append_interval = min_interval_duration <= interval_duration <= max_interval_duration 
+                elif min_interval_duration != None:
+                    append_interval = min_interval_duration <= interval_duration
+                elif max_interval_duration != None:
+                    append_interval = interval_duration <= max_interval_duration
+                else:
+                    append_interval = True
+                if append_interval:
+                    interval_border_idxs.append((start_idx, end_idx))
+        return interval_border_idxs    
+    
 
     def _add_new_marker_derived_existing_markers(self, df: pd.DataFrame, existing_markers: List[str], new_marker_id: str, likelihood_threshold: float = 0.5)->None:
         df_with_new_marker = df.copy()
@@ -661,33 +692,6 @@ class RecordingTop():
         immobility_interval_border_idxs = self._get_interval_border_idxs(all_matching_idxs = all_immobility_idxs, min_interval_duration = min_interval_duration)
         immobility_related_events = self._create_event_objects(interval_border_idxs = immobility_interval_border_idxs, event_type = event_type)
         return immobility_related_events        
-
-
-    def _get_interval_border_idxs(self,
-                                  all_matching_idxs: np.ndarray, 
-                                  min_interval_duration: Optional[float]=None, 
-                                  max_interval_duration: Optional[float]=None,
-                                 ) -> List[Tuple[int, int]]:
-        step_idxs = np.where(np.diff(all_matching_idxs) > 1)[0]
-        step_end_idxs = np.concatenate([step_idxs, np.array([all_matching_idxs.shape[0] - 1])])
-        step_start_idxs = np.concatenate([np.array([0]), step_idxs + 1])
-        interval_start_idxs = all_matching_idxs[step_start_idxs]
-        interval_end_idxs = all_matching_idxs[step_end_idxs]
-        interval_border_idxs = []
-        for start_idx, end_idx in zip(interval_start_idxs, interval_end_idxs):
-            interval_frame_count = (end_idx+1) - start_idx
-            interval_duration = interval_frame_count * self.framerate          
-            if (min_interval_duration != None) and (max_interval_duration != None):
-                append_interval = min_interval_duration <= interval_duration <= max_interval_duration 
-            elif min_interval_duration != None:
-                append_interval = min_interval_duration <= interval_duration
-            elif max_interval_duration != None:
-                append_interval = interval_duration <= max_interval_duration
-            else:
-                append_interval = True
-            if append_interval:
-                interval_border_idxs.append((start_idx, end_idx))
-        return interval_border_idxs
         
         
     def _create_event_objects(self, interval_border_idxs: List[Tuple[int, int]], event_type: str) -> List[EventBout2D]:
@@ -746,8 +750,9 @@ class RecordingTop():
                          'gait_bouts': self._export_gait_related_bouts(df = self.behavior_df, event_type = 'gait_bout')}
         dfs_to_export['session_overview'] = self._create_session_overview_df(dfs_to_export_with_individual_bout_dfs = dfs_to_export)
         dfs_to_export['parameter_settings'] = self._create_parameter_settings_df()
-        self._write_xlsx_file_to_disk(dfs_to_export = dfs_to_export, out_dir_path = out_dir_path)
-                                           
+        self.base_output_filepath = out_dir_path.joinpath(f'{self.metadata["animal"]}_{self.metadata["paradigm"]}_week-{self.week_id}')
+        self._write_xlsx_file_to_disk(dfs_to_export = dfs_to_export)   
+
                                            
     def _export_immobility_related_bouts(self, df: pd.DataFrame, event_type: str) -> pd.DataFrame:
         results_per_event = {'bout_id': [],
@@ -912,14 +917,53 @@ class RecordingTop():
         return pd.DataFrame(data = logged_settings)
     
     
-    def _write_xlsx_file_to_disk(self, dfs_to_export: Dict[str, pd.DataFrame], out_dir_path: Path) -> None:
-        output_filepath = out_dir_path.joinpath(f'{self.metadata["animal"]}_{self.metadata["paradigm"]}_week-{self.week_id}_results.xlsx')
-        writer = pd.ExcelWriter(output_filepath, engine='xlsxwriter')
+    def _write_xlsx_file_to_disk(self, dfs_to_export: Dict[str, pd.DataFrame]) -> None:
+        writer = pd.ExcelWriter(f'{self.base_output_filepath}.xlsx', engine='xlsxwriter')
         for tab_name, df in dfs_to_export.items():
             df.to_excel(writer, sheet_name = tab_name)
         writer.save()
 
 
+    def inspect_processing(self,
+                           marker_ids_to_inspect: List[str]=['CenterOfGravity'],
+                           verbose: bool=False,
+                           show_plot: bool=False,
+                           save_plot: bool=True,
+                           show_legend: bool=False
+                          ) -> None:
+        if verbose:
+            print(f'Inspection of file: {self.filepath.name}:')
+            for marker_id in marker_ids_to_inspect:
+                coverage = self._compute_coverage(df = self.bodyparts[marker_id].df, critical_marker_ids = [marker_id])
+                print(f'... coverage of "{marker_id}" was at: {round(coverage*100, 2)} %')
+        if show_plot or save_plot:
+            self._plot_selected_marker_ids_on_normalized_maze(marker_ids = marker_ids_to_inspect,
+                                                              show = show_plot, 
+                                                              save = save_plot, 
+                                                              legend = show_legend)
+
+        
+    def _plot_selected_marker_ids_on_normalized_maze(self, marker_ids: List[str], show: bool=True, save: bool=True, legend: bool=False) -> None:
+        fig = plt.figure(figsize=(10, 5), facecolor='white')
+        ax = fig.add_subplot(111)
+        for corner_marker_id in ['MazeCornerClosedRight', 'MazeCornerClosedLeft', 'MazeCornerOpenRight', 'MazeCornerOpenLeft']:
+            x, y = self.logs[f'normalized_{corner_marker_id}_coords']
+            plt.scatter(x, y, label = corner_marker_id)
+        for marker_id in marker_ids:
+            plt.scatter(self.bodyparts[marker_id].df['x'], self.bodyparts[marker_id].df['y'], alpha = 0.1, label = marker_id)
+        plt.plot([0, 0, 50, 50, 0], [0, 4, 4, 0, 0], c = 'black')
+        ax.set_aspect('equal')
+        if legend:
+            plt.legend()
+        if save:
+            assert hasattr(self, 'base_output_filepath'), 'You must run ".export_results()" first if you´d like to save the plot. Alternatively, just opt to show the plot.' 
+            plt.savefig(f'{self.base_output_filepath}.png', dpi = 300)
+        if show:
+            plt.show()
+        else:
+            plt.close()
+                
+                
                 
 class Bodypart2D():
     """
