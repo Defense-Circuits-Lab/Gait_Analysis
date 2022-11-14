@@ -573,12 +573,13 @@ class RecordingTop(ABC):
                                 gait_min_rolling_speed: float=4.0,
                                 gait_min_duration: float=1.0,
                                 gait_disruption_max_time_to_immobility: float=0.2,
-                                merge_events_max_inbetween_time: float=0.15
+                                merge_events_max_inbetween_time: float=0.15,
+                                bodyparts_to_include_in_behavior_df = ['CenterOfGravity', 'Snout', 'TailBase'],
                                ) -> None:
         sliding_window_size = int(round(self._get_max_odd_n_frames_for_time_interval(fps = self.fps, time_interval = 0.5) / 2, 0))
         for bodypart in self.bodyparts.values():
             bodypart.calculate_speed_and_identify_immobility(sliding_window_size = sliding_window_size, immobility_threshold = immobility_max_rolling_speed)
-        self.behavior_df = pd.DataFrame(data = {'facing_towards_open_end': [False]*self.normalized_df.shape[0]})
+        self.behavior_df = self._create_behavior_df(bodyparts_to_include = bodyparts_to_include_in_behavior_df)
         self._add_orientation_to_behavior_df(bodyparts_for_direction_front_to_back = bodyparts_for_direction_front_to_back)
         self._add_immobility_based_on_several_bodyparts_to_behavior_df(bodyparts_critical_for_freezing = bodyparts_critical_for_freezing)
         immobility_events = self._get_immobility_related_events(min_interval_duration = immobility_min_duration, event_type = 'immobility_bout')
@@ -599,6 +600,11 @@ class RecordingTop(ABC):
         #self.log['freezing_min_time'] = freezing_min_time
         #self.log['merge_events_max_inbetween_time'] = merge_events_max_inbetween_time        
 
+        
+    def _create_behavior_df(self, bodyparts_to_include: List[str]) -> pd.DataFrame:
+        column_names = self._get_column_names(df = self.normalized_df, column_identifiers = ['x', 'y', 'likelihood'], marker_ids = bodyparts_to_include)
+        return self.normalized_df[column_names].copy()
+        
         
     def _add_orientation_to_behavior_df(self, bodyparts_for_direction_front_to_back: List[str]) -> None:
         assert len(bodyparts_for_direction_front_to_back) ==2, '"bodyparts_for_direction_front_to_back" must be a list of exact 2 marker_ids!'
@@ -702,9 +708,129 @@ class RecordingTop(ABC):
     def _get_interval_border_idxs_from_event_type_and_id(self, event_type: str, event_id: int) -> Tuple[int, int]:
         interval_idxs = self.behavior_df.loc[self.behavior_df[f'{event_type}_id'] == event_id].index.values
         return interval_idxs[0], interval_idxs[-1]
+    
+    
+    def export_results(self) -> None:
+        immobility_bout_results_per_level = self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'immobility_bout')
+        freezing_bout_results_per_level = self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'freezing_bout')
+        gait_disruption_results_per_level = self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'gait_disruption_bout')
+        gait_results_per_level = self._export_gait_related_bouts(df = self.behavior_df, event_type = 'gait_bout')
+        self.exported_dfs = {'immobility_bouts': immobility_bout_results_per_level,
+                            'freezing_bouts': freezing_bout_results_per_level, 
+                            'gait_disruption_bouts': gait_disruption_results_per_level, 
+                            'gait_bouts': gait_results_per_level}
+        output_filepath = self.filepath.parent.joinpath(f'{self.filepath.name[:-4]}_event_level_results.xlsx')
+        writer = pd.ExcelWriter(output_filepath, engine='xlsxwriter')
+        for bout_type, df in self.exported_dfs.items():
+            df.to_excel(writer, sheet_name = bout_type)
+        writer.save()
+    
+    
+    def _export_immobility_related_bouts(self, df: pd.DataFrame, event_type: str) -> pd.DataFrame:
+        results_per_event = {'bout_id': [],
+                            'duration': [],
+                            'CenterOfGravity_x_at_bout_start': [],
+                            'towards_open_at_bout_start': [], 
+                            'start_idx': [],
+                            'end_idx': []}
+        results_per_event['bout_id'] = self._get_all_bout_ids(df = df, event_type = event_type)
+        if len(results_per_event['bout_id']) >= 1:
+            results_per_event['duration'] = self._get_bout_duration_per_bout_id(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
+            x_positions_center_of_gravity_at_interval_borders = self._get_column_values_at_event_borders(df = df,
+                                                                                                    event_type = event_type,
+                                                                                                    event_ids = results_per_event['bout_id'],
+                                                                                                    column_name = 'CenterOfGravity_x')
+            results_per_event['CenterOfGravity_x_at_bout_start'] = x_positions_center_of_gravity_at_interval_borders[:, 0]
+            direction_towards_open_at_interval_borders = self._get_column_values_at_event_borders(df = df,
+                                                                                            event_type = event_type,
+                                                                                            event_ids = results_per_event['bout_id'],
+                                                                                            column_name = 'facing_towards_open_end')
+            results_per_event['towards_open_at_bout_start'] = direction_towards_open_at_interval_borders[:, 0]
+            bout_start_and_end_idxs = self._get_interval_start_and_end_idxs_per_event(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
+            results_per_event['start_idx'] = bout_start_and_end_idxs[:, 0]
+            results_per_event['end_idx'] = bout_start_and_end_idxs[:, 1]
+        return pd.DataFrame(data = results_per_event)
+    
+       
 
-            
-        
+    def _export_gait_related_bouts(self, df: pd.DataFrame, event_type: str) -> pd.DataFrame:
+        results_per_event = {'bout_id': [],
+                            'duration': [],
+                            'CenterOfGravity_x_at_bout_end': [],
+                            'towards_open_at_bout_end': [],
+                            #'mean_rolling_speed_cm_per_s': [],
+                            'distance_covered_cm': [], 
+                            'start_idx': [],
+                            'end_idx': []}
+        results_per_event['bout_id'] = self._get_all_bout_ids(df = df, event_type = event_type)
+        if len(results_per_event['bout_id']) >= 1:
+            results_per_event['duration'] = self._get_bout_duration_per_bout_id(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
+            x_positions_center_of_gravity_at_interval_borders = self._get_column_values_at_event_borders(df = df,
+                                                                                                    event_type = event_type,
+                                                                                                    event_ids = results_per_event['bout_id'],
+                                                                                                    column_name = 'CenterOfGravity_x')
+            results_per_event['CenterOfGravity_x_at_bout_end'] = x_positions_center_of_gravity_at_interval_borders[:, 1]
+            direction_towards_open_at_interval_borders = self._get_column_values_at_event_borders(df = df,
+                                                                                            event_type = event_type,
+                                                                                            event_ids = results_per_event['bout_id'],
+                                                                                            column_name = 'facing_towards_open_end')
+            results_per_event['towards_open_at_bout_end'] = direction_towards_open_at_interval_borders[:, 1]
+            """
+            results_per_event['mean_rolling_speed_cm_per_s'] = self._get_mean_column_value_per_event(df = df,
+                                                                                                event_type = event_type,
+                                                                                                event_ids = results_per_event['bout_id'],
+                                                                                                column_name = 'CenterOfGravity_rolling_speed_cm_per_s')
+            """
+            results_per_event['distance_covered_cm'] = self._get_distance_covered_per_event(df = df, 
+                                                                                       event_type = event_type,
+                                                                                       event_ids = results_per_event['bout_id'],
+                                                                                       marker_id = 'CenterOfGravity')
+            bout_start_and_end_idxs = self._get_interval_start_and_end_idxs_per_event(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
+            results_per_event['start_idx'] = bout_start_and_end_idxs[:, 0]
+            results_per_event['end_idx'] = bout_start_and_end_idxs[:, 1]
+        return pd.DataFrame(data = results_per_event)
+
+    
+    def _get_distance_covered_per_event(self, df: pd.DataFrame, event_type: str, event_ids: List[float], marker_id: str) -> List[float]:
+        distances_per_event = []
+        for event_id in event_ids:
+            df_tmp = df.loc[df[f'{event_type}_id'] == event_id].copy()
+            distances_per_event.append(((df_tmp[f'{marker_id}_x'].diff()**2 + df_tmp[f'{marker_id}_y'].diff()**2)**0.5).cumsum().iloc[-1])
+        return distances_per_event
+
+
+    def _get_mean_column_value_per_event(self, df: pd.DataFrame, event_type: str, event_ids: List[float], column_name: str) -> List[float]:
+        mean_values = []
+        for event_id in event_ids:
+            mean_values.append(df.loc[df[f'{event_type}_id'] == event_id, column_name].mean())
+        return mean_values
+
+
+    def _get_all_bout_ids(self, df: pd.DataFrame, event_type: str) -> np.ndarray:
+        return df[f'{event_type}_id'].dropna().unique()
+
+
+    def _get_bout_duration_per_bout_id(self, df: pd.DataFrame, event_type: str, event_ids: List[float]) -> List[float]:
+        durations = []
+        for event_id in event_ids:
+            durations.append(df.loc[df[f'{event_type}_id'] == event_id, f'{event_type}_duration'].iloc[0])
+        return durations
+
+
+    def _get_column_values_at_event_borders(self, df: pd.DataFrame, event_type: str, event_ids: List[float], column_name: str) -> np.ndarray:
+        values_at_interval_borders = []
+        for event_id in event_ids:
+            start_value = df.loc[df[f'{event_type}_id'] == event_id, column_name].iloc[0]
+            end_value = df.loc[df[f'{event_type}_id'] == event_id, column_name].iloc[-1]
+            values_at_interval_borders.append((start_value, end_value))
+        return np.asarray(values_at_interval_borders)
+
+
+    def _get_interval_start_and_end_idxs_per_event(self, df: pd.DataFrame, event_type: str, event_ids: List[float]) -> np.ndarray:
+        interval_border_idxs = []
+        for event_id in event_ids:
+            interval_border_idxs.append(df.loc[df[f'{event_type}_id'] == event_id].index.values[[0, -1]])
+        return np.asarray(interval_border_idxs)
        
                 
 class Bodypart2D():
