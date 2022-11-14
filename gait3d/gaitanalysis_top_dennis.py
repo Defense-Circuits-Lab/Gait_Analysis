@@ -15,6 +15,37 @@ from statistics import mean
 import cv2
 import pickle
 from scipy.signal import savgol_filter
+
+
+class EventBout2D():
+    """
+    Class, that contains start_index, end_index, duration and position of an event.
+    It doesn't differ to class EventBout for now, so for the future this classes could be merged.
+    
+    Attributes:
+        self.start_index(int): index of event onset
+        self.end_index(int): index of event ending
+    """
+    
+    def __init__(self, event_id: int, start_idx: int, end_idx: int, fps: int, event_type: str) -> None:
+        """
+        Constructor of class EventBout that sets the attributes start_ and end_index.
+        
+        Parameters: 
+            start_index(int): index of event onset
+            end_index(Optional[int]): index of event ending (if event is not only a single frame)
+        """
+        self.id = event_id
+        self.event_type = event_type
+        self.start_idx = start_idx
+        self.end_idx = end_idx
+        self.duration = ((self.end_idx + 1) - self.start_idx)/fps
+        
+
+
+
+
+
         
 class RecordingTop(ABC):
     """
@@ -537,8 +568,8 @@ class RecordingTop(ABC):
                                 bodyparts_critical_for_freezing: List[str]=['Snout', 'CenterOfGravity'],
                                 bodyparts_for_direction_front_to_back: List[str]=['Snout', 'CenterOfGravity'],
                                 immobility_max_rolling_speed: float=2.0,
-                                immobility_min_time: float=0.2,
-                                freezing_min_time: float=0.5,
+                                immobility_min_duration: float=0.2,
+                                freezing_min_duration: float=0.5,
                                 gait_min_rolling_speed: float=4.0,
                                 gait_min_duration: float=1.0,
                                 gait_disruption_max_time_to_immobility: float=0.2,
@@ -550,15 +581,15 @@ class RecordingTop(ABC):
         self.behavior_df = pd.DataFrame(data = {'facing_towards_open_end': [False]*self.normalized_df.shape[0]})
         self._add_orientation_to_behavior_df(bodyparts_for_direction_front_to_back = bodyparts_for_direction_front_to_back)
         self._add_immobility_based_on_several_bodyparts_to_behavior_df(bodyparts_critical_for_freezing = bodyparts_critical_for_freezing)
-        immobility_events = self._get_immobility_related_events(min_interval_duration = immobility_min_time, event_type = 'immobility_bout')
-        self._add_event_bouts_to_behavior_df(events = immobility_events)
-        freezing_events = self._get_immobility_related_events(min_interval_duration = freezing_min_time, event_type = 'freezing_bout')
-        self._add_event_bouts_to_behavior_df(events = freezing_events)
+        immobility_events = self._get_immobility_related_events(min_interval_duration = immobility_min_duration, event_type = 'immobility_bout')
+        self._add_event_bouts_to_behavior_df(event_type = 'immobility_bout', events = immobility_events)
+        freezing_events = self._get_immobility_related_events(min_interval_duration = freezing_min_duration, event_type = 'freezing_bout')
+        self._add_event_bouts_to_behavior_df(event_type = 'freezing_bout', events = freezing_events)
         gait_events = self._get_gait_events(gait_min_rolling_speed = gait_min_rolling_speed, gait_min_duration = gait_min_duration)
-        self.add_event_bouts_to_behavior_df(events = gait_events)
-        gait_disruption_events = self._get_gait_disruption_events(gait_disruption_min_time = immobility_min_time, 
+        self._add_event_bouts_to_behavior_df(event_type = 'gait_bout', events = gait_events)
+        gait_disruption_events = self._get_gait_disruption_events(gait_events = gait_events, 
                                                                   gait_disruption_max_time_to_immobility = gait_disruption_max_time_to_immobility)
-        self.add_event_bouts_to_behavior_df(events = gait_disruption_events)
+        self._add_event_bouts_to_behavior_df(event_type = 'gait_disruption_bout', events = gait_disruption_events)
         #self.log['rolling_speed_sliding_window_size'] = sliding_window_size
         #self.log['bodyparts_for_direction_front_to_back'] = bodyparts_for_direction_front_to_back
         #self.log['immobility_max_rolling_speed'] = immobility_max_rolling_speed
@@ -585,9 +616,9 @@ class RecordingTop(ABC):
             valid_idxs_per_marker_id.append(tmp_df.loc[tmp_df['immobility'] == True].index.values)
         shared_valid_idxs_for_all_markers = valid_idxs_per_marker_id[0]
         if len(valid_idxs_per_marker_id) > 1:
-            for i in range(1, len(valid_idxs_per_marker_id)):
-                shared_valid_idxs_for_all_markers = np.intersect1d(shared_valid_idxs_for_all_markers, valid_idxs_per_marker_id[i])
-        self.behavior_df.iloc[shared_valid_idxs_for_all_markers, 'immobility'] = True        
+            for next_set_of_valid_idxs in valid_idxs_per_marker_id[1:]:
+                shared_valid_idxs_for_all_markers = np.intersect1d(shared_valid_idxs_for_all_markers, next_set_of_valid_idxs)
+        self.behavior_df.loc[shared_valid_idxs_for_all_markers, 'immobility'] = True        
         
         
     def _get_immobility_related_events(self, min_interval_duration: float, event_type: str) -> List[EventBout2D]:
@@ -603,12 +634,14 @@ class RecordingTop(ABC):
                                   max_interval_duration: Optional[float]=None,
                                  ) -> List[Tuple[int, int]]:
         step_idxs = np.where(np.diff(all_matching_idxs) > 1)[0]
-        interval_end_idxs = np.concatenate([step_idxs, np.array([all_matching_idxs.shape[0] - 1])])
-        interval_start_idxs = np.concatenate([np.array([0]), step_idxs + 1])
+        step_end_idxs = np.concatenate([step_idxs, np.array([all_matching_idxs.shape[0] - 1])])
+        step_start_idxs = np.concatenate([np.array([0]), step_idxs + 1])
+        interval_start_idxs = all_matching_idxs[step_start_idxs]
+        interval_end_idxs = all_matching_idxs[step_end_idxs]
         interval_border_idxs = []
         for start_idx, end_idx in zip(interval_start_idxs, interval_end_idxs):
             interval_frame_count = (end_idx+1) - start_idx
-            interval_duration = interval_frame_count * (1/self.framerate)          
+            interval_duration = interval_frame_count * self.framerate          
             if (min_interval_duration != None) and (max_interval_duration != None):
                 append_interval = min_interval_duration <= interval_duration <= max_interval_duration 
             elif min_interval_duration != None:
@@ -626,19 +659,23 @@ class RecordingTop(ABC):
         events = []
         event_id = 0
         for start_idx, end_idx in interval_border_idxs:
-            single_event = EventBout2D(event_id = event_id, start_index = start_idx, end_idx = end_ix, fps = self.fps, event_type = event_type)
+            single_event = EventBout2D(event_id = event_id, start_idx = start_idx, end_idx = end_idx, fps = self.fps, event_type = event_type)
             events.append(single_event)
             event_id += 1
         return events         
 
 
-    def _add_event_bouts_to_behavior_df(self, events: List[EventBout2D]) -> None:
-        assert events[0].event_type not in list(self.behavior_df.columns), f'{events[0].event_type} was already a column in self.behavior_df!'
-        self.behavior_df[events[0].event_type] = np.nan
-        self.behavior_df[f'{events[0].event_type}_id'] = np.nan
-        for event_id, event_bout in enumerate(events):
-            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx + 1, -2] = True
-            self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx + 1, -1] = event_id
+    def _add_event_bouts_to_behavior_df(self, event_type: str, events: List[EventBout2D]) -> None:
+        assert event_type not in list(self.behavior_df.columns), f'{event_type} was already a column in self.behavior_df!'
+        self.behavior_df[event_type] = np.nan
+        self.behavior_df[f'{event_type}_id'] = np.nan
+        self.behavior_df[f'{event_type}_duration'] = np.nan
+        if len(events) > 0:
+            for event_bout in events:
+                assert event_bout.event_type == event_type, f'Event types didn´t match! Expected {event_type} but found {event_bout.event_type}.'
+                self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx + 1, -3] = True
+                self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx + 1, -2] = event_bout.id
+                self.behavior_df.iloc[event_bout.start_idx : event_bout.end_idx + 1, -1] = event_bout.duration
 
         
     def _get_gait_events(self, gait_min_rolling_speed: float, gait_min_duration: float) -> List[EventBout2D]:
@@ -649,28 +686,14 @@ class RecordingTop(ABC):
         
     
     def _get_gait_disruption_events(self, gait_events: List[EventBout2D], gait_disruption_max_time_to_immobility: float) -> List[EventBout2D]:
-        if int(gait_disruption_max_time_to_immobility * self.fps) == (gait_disruption_max_time_to_immobility * self.fps):
-            n_frames_max_distance = int(gait_disruption_max_time_to_immobility * self.fps)
-        else:
-            n_frames_max_distance = int(gait_disruption_max_time_to_immobility * self.fps) + 1
+        n_frames_max_distance = int(gait_disruption_max_time_to_immobility * self.fps)
         gait_disruption_interval_border_idxs = []
         for gait_bout in gait_events:
             end_idx = gait_bout.end_idx
-            immobility_bout_values_slice = self.behavior_df['immobility_bout'][end_idx : n_frames_max_distance + 1].values
-            potential_matches = np.where(immobility_bout_values_slice == True)[0] # also considers 1 as True ... -.-' 
-            if potential_matches.shape[0] > 0:
-                for idx in potential_matches:
-                    if type(immobility_bout_values_slice[idx]) == bool:
-                        immobility_bout_found = True
-                        immobility_bout_idx = end_idx + idx
-                        break
-                    else:
-                        immobility_bout_found = False
-            else:
-                immobility_bout_found = False           
-            if immobility_bout_found == True:
-                immobility_bout_id = self.behavior_df['immobility_bout_id'][immobility_bout_idx]
-                immobility_interval_border_idxs = self._get_interval_border_idxs_from_event_type_and_id(event_type = 'immobility_bout', event_id = immobility_bout_id)
+            unique_immobility_bout_values = self.behavior_df.loc[end_idx : end_idx + n_frames_max_distance + 1, 'immobility_bout'].unique()
+            if True in unique_immobility_bout_values:
+                closest_immobility_bout_id = self.behavior_df.loc[end_idx : end_idx + n_frames_max_distance + 1, 'immobility_bout_id'].dropna().unique().min()
+                immobility_interval_border_idxs = self._get_interval_border_idxs_from_event_type_and_id(event_type = 'immobility_bout', event_id = closest_immobility_bout_id)
                 gait_disruption_interval_border_idxs.append(immobility_interval_border_idxs)
         gait_disruption_events = self._create_event_objects(interval_border_idxs = gait_disruption_interval_border_idxs, event_type = 'gait_disruption_bout')
         return gait_disruption_events
@@ -760,53 +783,7 @@ class Bodypart2D():
 
 
 
-class EventBout2D():
-    """
-    Class, that contains start_index, end_index, duration and position of an event.
-    It doesn't differ to class EventBout for now, so for the future this classes could be merged.
-    
-    Attributes:
-        self.start_index(int): index of event onset
-        self.end_index(int): index of event ending
-    """
-    
-    def __init__(self, event_id: int, start_idx: int, end_ix: int, fps: int, event_type: str) -> None:
-        """
-        Constructor of class EventBout that sets the attributes start_ and end_index.
-        
-        Parameters: 
-            start_index(int): index of event onset
-            end_index(Optional[int]): index of event ending (if event is not only a single frame)
-        """
-        self.id = event_id
-        self.event_type = event_type
-        self.start_idx = start_idx
-        self.end_idx = end_idx
-        self.duration = ((self.end_idx + 1) - self.start_idx)/fps
-        
-        
-    def check_that_freezing_threshold_was_reached(self)->None:
-        """
-        Function, that calculates the duration of an event and checks, whether it exceeded the freezing_threshold.
-        
-        Parameters:
-            fps(int): fps of the recording
-        """
-        self.freezing_threshold_reached = False
-        if self.duration > self.freezing_threshold:
-            self.freezing_threshold_reached = True
-        self.dict['freezing_threshold_reached']=self.freezing_threshold_reached
-        self.dict['duration_in_s'] = self.duration
 
-    def get_position(self, centerofgravity: Bodypart2D)->None:
-        """
-        Function, that saves the position of the mouse at the start_index.
-        
-        Parameters:
-            centerofgravity(Bodypart): object centerofgravity, its df x column is used to extract the mouse position
-        """
-        self.x_position=centerofgravity.df.loc[self.start_index:self.end_index, 'x'].median()
-        self.dict['x_position']=self.x_position
 
 
 class EventSeries(ABC):
