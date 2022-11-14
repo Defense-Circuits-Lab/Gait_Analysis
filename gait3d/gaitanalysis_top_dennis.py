@@ -3,8 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 from typing import Tuple, List, Dict, Optional, Union
-from pathlib import Path
-from abc import ABC, abstractmethod
+from pathlib import Path, PosixPath
 import os
 import imageio.v3 as iio
 from scipy.spatial.transform import Rotation
@@ -40,14 +39,10 @@ class EventBout2D():
         self.start_idx = start_idx
         self.end_idx = end_idx
         self.duration = ((self.end_idx + 1) - self.start_idx)/fps
-        
-
-
-
 
 
         
-class RecordingTop(ABC):
+class RecordingTop():
     """
     Class for Analysing 2D-Position Data of mice in the OpeningTrack.
     
@@ -58,35 +53,42 @@ class RecordingTop(ABC):
     """
        
     @property
-    def valid_paradigms(self)->List[str]:
+    def valid_paradigms(self) -> List[str]:
         return ['OTR', 'OTT', 'OTE']
     
     @property
-    def valid_mouse_lines(self)->List[str]:
+    def valid_mouse_lines(self) -> List[str]:
         return ['194', '195', '196', '206', '209']
+    
+    @property
+    def valid_recording_weeks(self) -> List[int]:
+        return [1, 4, 8, 12, 14]
     
     @property
     def marker_ids_to_exclude_for_smoothing_and_interpolation(self) -> List[str]:
         return ['LED5', 'MazeCornerClosedRight', 'MazeCornerClosedLeft', 'MazeCornerOpenRight', 'MazeCornerOpenLeft']
 
     
-    def __init__(self, filepath: Path, fps: int)->None:
+    def __init__(self, filepath: Path, week_id: int)->None:
         """
         Constructor for the Recording2D class.
         
-        This function calls functions to get the Dataframe from the csv, that is given as filepath argument and to read metadata from the filename.
+        This function calls functions to get the Dataframe from the csv, that is given as filepath argument and extracts and checks metadata from the filename.
         
         Parameters:
-            filepath(pathlib.Path): the filepath to the h5 containing DLC data
-            fps(int): fps of the recording
+            filepath(pathlib.Path): the filepath to the h5 or csv containing DLC data
+            week_id(int): the experimental week in which the recording was performed (1, 4, 8, 12, or 14)
         """
+        assert type(filepath) == PosixPath, '"filepath" has to be a pathlib.Path object'
+        assert week_id in self.valid_recording_weeks, f'"week_id" = {week_id} is not listed in "valid_recording_weeks": {self.valid_recording_weeks}'
         self.filepath = filepath
+        self.week_id = week_id
         self.full_df_from_file = self._get_df_from_file(filepath = filepath)
-        self.fps = fps
-        self.framerate = 1/fps
-        self.metadata = self._retrieve_metadata(filepath = filepath.name)
-
-
+        self.fps = self._get_correct_fps()
+        self.framerate = 1/self.fps
+        self.metadata = self._retrieve_metadata(filename = filepath.name)
+        
+        
     def _get_df_from_file(self, filepath: Path)->pd.DataFrame:
         """
         Reads the Dataframe from the h5-file and drops irrelevant columns and rows.
@@ -118,9 +120,17 @@ class RecordingTop(ABC):
         else:
             raise ValueError('The Path you specified is not linking to a .csv/.h5-file!')
         return df
+    
+
+    def _get_correct_fps(self) -> int:
+        if self.full_df_from_file.shape[0] > 25_000:
+            fps = 80
+        else:
+            fps = 30
+        return fps
 
 
-    def _retrieve_metadata(self, filepath: str)->Dict:
+    def _retrieve_metadata(self, filename: str)->Dict:
         """
         Function, that slices the Filename to get the encoded metadata.
         
@@ -131,11 +141,11 @@ class RecordingTop(ABC):
         Returns:
             Dict: containing date of recording, animal_id and OT paradigm
         """
-        filepath_slices = filepath.split('_')
-        animal_line, animal_id, recording_date, paradigm, cam_id = filepath_slices[0], filepath_slices[1], filepath_slices[2], filepath_slices[3][0:3], 'Top'
+        filename_slices = filename.split('_')
+        animal_line, animal_id, recording_date, paradigm, cam_id = filename_slices[0], filename_slices[1], filename_slices[2], filename_slices[3][0:3], 'Top'
         self._check_metadata(metadata = (animal_line, animal_id, recording_date, paradigm, cam_id))
-        return {'recording_date': self.recording_date, 'animal': self.mouse_line + '_' + self.mouse_id, 'paradigm': self.paradigm, 'cam': self.cam_id}
-
+        return {'recording_date': self.recording_date, 'animal': f'{self.mouse_line}_{self.mouse_id}', 'paradigm': self.paradigm, 'cam': self.cam_id}
+    
     
     def _check_metadata(self, metadata = Tuple[str]) -> None: 
         animal_line, animal_id, recording_date, paradigm, cam_id = metadata[0], metadata[1], metadata[2], metadata[3], metadata[4]
@@ -192,12 +202,12 @@ class RecordingTop(ABC):
                    marker_ids_to_compute_center_of_gravity: List[str]=['TailBase', 'Snout'],
                    relative_maze_normalization_error_tolerance: float=0.25
                    ) -> None:
-        self.log = {'critical_markers': marker_ids_to_compute_coverage,
-                    'coverage_threshold': coverage_threshold,
-                    'max_seconds_to_interpolate': max_seconds_to_interpolate,
-                    'likelihood_threshold': likelihood_threshold,
-                    'center_of_gravity_based_on': marker_ids_to_compute_center_of_gravity, 
-                    'relative_error_tolerance_corner_detection': relative_maze_normalization_error_tolerance}
+        initial_logs_to_add = {'critical_markers_to_compute_coverage': marker_ids_to_compute_coverage,
+                               'coverage_threshold': coverage_threshold,
+                               'max_seconds_to_interpolate': max_seconds_to_interpolate,
+                               'min_likelihood_threshold': likelihood_threshold,
+                               'center_of_gravity_based_on': marker_ids_to_compute_center_of_gravity, 
+                               'relative_error_tolerance_corner_detection': relative_maze_normalization_error_tolerance}
         window_length = self._get_max_odd_n_frames_for_time_interval(fps = self.fps, time_interval = max_seconds_to_interpolate)
         marker_ids_to_preprocess = self._get_preprocessing_relevant_marker_ids(df = self.full_df_from_file)
         smoothed_df = self._smooth_tracked_coords_and_likelihood(marker_ids = marker_ids_to_preprocess, window_length = window_length, polyorder = 3)
@@ -209,24 +219,36 @@ class RecordingTop(ABC):
         preprocessed_df = self._interpolate_low_likelihood_intervals(df = interpolated_df_with_cog,
                                                                      marker_ids = ['CenterOfGravity'],
                                                                      max_interval_length = window_length)
-        self.preprocessed_df = preprocessed_df
-        self.log['coverage_critical_markers'] = self._compute_coverage(df = preprocessed_df,
-                                                                       critical_marker_ids = marker_ids_to_compute_coverage,
-                                                                       likelihood_threshold = likelihood_threshold)
-        self.log['coverage_CenterOfGravity'] = self._compute_coverage(df = preprocessed_df,
-                                                                      critical_marker_ids = ['CenterOfGravity'],
-                                                                      likelihood_threshold = likelihood_threshold)
-        if self.log['coverage_critical_markers'] >= coverage_threshold:
+        coverage_critical_markers = self._compute_coverage(df = preprocessed_df,
+                                                           critical_marker_ids = marker_ids_to_compute_coverage,
+                                                           likelihood_threshold = likelihood_threshold)
+        initial_logs_to_add['coverage_critical_markers'] = coverage_critical_markers
+        self._add_to_logs(logs_to_add = initial_logs_to_add)
+        if coverage_critical_markers >= coverage_threshold:
             normalization_params = self._get_parameters_to_normalize_maze_coordinates(df = preprocessed_df,
                                                                                       relative_error_tolerance = relative_maze_normalization_error_tolerance)
             self.normalized_df = self._normalize_df(df = preprocessed_df, normalization_parameters = normalization_params)
             self.bodyparts = self._create_bodypart_objects()
-            self.log['normalization_parameters'] = normalization_params
-            self.log['normalized_maze_corner_coordinates'] = self._get_normalized_maze_corners(normalization_parameters = normalization_params)
-        else:
-            print(f'Unfortunately, there was insufficient tracking coverage for {self.filepath.name}. We have to skip this recording!')
+            normalized_maze_corner_coords = self._get_normalized_maze_corners(normalization_parameters = normalization_params)
+            coverage_center_of_gravity = self._compute_coverage(df = preprocessed_df,
+                                                                critical_marker_ids = ['CenterOfGravity'],
+                                                                likelihood_threshold = likelihood_threshold)
+            additional_logs_to_add = {'coverage_CenterOfGravity': coverage_center_of_gravity}
+            for key, value in normalization_params.items():
+                additional_logs_to_add[key] = value
+            for key, value in normalized_maze_corner_coords.items():
+                additional_logs_to_add[f'normalized_{key}_coords'] = value
+            self._add_to_logs(logs_to_add = additional_logs_to_add)
 
 
+    def _add_to_logs(self, logs_to_add: Dict) -> None:
+        if hasattr(self, 'logs') == False:
+            self.logs = {}
+        for key, value in logs_to_add.items():
+            assert key not in self.logs.keys(), f'{key} is already in self.logs.keys - adding it would result in overwriting the previous entry; please ensure unique naming'
+            self.logs[key] = value           
+            
+            
     def _get_max_odd_n_frames_for_time_interval(self, fps: int, time_interval: 0.5) -> int:
         assert type(fps) == int, '"fps" has to be an integer!'
         frames_per_time_interval = fps * time_interval
@@ -356,7 +378,7 @@ class RecordingTop(ABC):
         best_result = self._evaluate_maze_shape_using_open_corners(corners_and_likelihoods = corners, tolerance = relative_error_tolerance)
         if best_result['valid']:
             side_id = best_result['side_id']
-            self.log['maze_normalization_based_on'] = f'MazeCornerClosed{side_id}_and_MazeCornerOpen{side_id}'
+            logs_to_add = {'maze_normalization_based_on': f'MazeCornerClosed{side_id}_and_MazeCornerOpen{side_id}'}
             conversion_factor = self._get_conversion_factor_px_to_cm(coords_point_a = corners[f'MazeCornerClosed{side_id}']['coords'],
                                                                      coords_point_b = corners[f'MazeCornerOpen{side_id}']['coords'],
                                                                      distance_in_cm = 50)
@@ -365,13 +387,14 @@ class RecordingTop(ABC):
                                                                        translation_vector = translation_vector,
                                                                        conversion_factor = conversion_factor)
         else:
-            self.log['maze_normalization_based_on'] = f'MazeCornerClosedRight_and_MazeCornerClosedLeft'
+            logs_to_add = {'maze_normalization_based_on': f'MazeCornerClosedRight_and_MazeCornerClosedLeft'}
             conversion_factor = self._get_conversion_factor_px_to_cm(coords_point_a = corners['MazeCornerClosedLeft']['coords'],
                                                                      coords_point_b = corners['MazeCornerClosedRight']['coords'],
                                                                      distance_in_cm = 4)
             rotation_angle = self._get_rotation_angle_with_closed_corners_only(corners = corners,
                                                                                translation_vector = translation_vector,
                                                                                conversion_factor = conversion_factor)
+        self._add_to_logs(logs_to_add = logs_to_add)
         return {'translation_vector': translation_vector, 'rotation_angle': rotation_angle, 'conversion_factor': conversion_factor}
 
         
@@ -568,15 +591,29 @@ class RecordingTop(ABC):
                                 bodyparts_critical_for_freezing: List[str]=['Snout', 'CenterOfGravity'],
                                 bodyparts_for_direction_front_to_back: List[str]=['Snout', 'CenterOfGravity'],
                                 immobility_max_rolling_speed: float=2.0,
-                                immobility_min_duration: float=0.2,
+                                immobility_min_duration: float=0.1,
                                 freezing_min_duration: float=0.5,
-                                gait_min_rolling_speed: float=4.0,
-                                gait_min_duration: float=1.0,
-                                gait_disruption_max_time_to_immobility: float=0.2,
+                                gait_min_rolling_speed: float=3.0,
+                                gait_min_duration: float=0.5,
+                                gait_disruption_max_time_to_immobility: float=0.15,
                                 merge_events_max_inbetween_time: float=0.15,
                                 bodyparts_to_include_in_behavior_df = ['CenterOfGravity', 'Snout', 'TailBase'],
                                ) -> None:
+        # parameter selection for immobility speed threshold and freezing min duration based on:
+        # https://www.sciencedirect.com/science/article/pii/S0960982216306182
         sliding_window_size = int(round(self._get_max_odd_n_frames_for_time_interval(fps = self.fps, time_interval = 0.5) / 2, 0))
+        logs_to_add = {'bodyparts_checked_to_infer_immobility': bodyparts_critical_for_freezing,
+                       'bodypart_used_to_identify_front': bodyparts_for_direction_front_to_back[0],
+                       'bodypart_used_to_identify_back': bodyparts_for_direction_front_to_back[1],
+                       'immobility_max_rolling_speed' : immobility_max_rolling_speed,
+                       'immobility_min_duration': immobility_min_duration,
+                       'freezing_min_duration': freezing_min_duration, 
+                       'gait_min_rolling_speed': gait_min_rolling_speed, 
+                       'gait_min_duration': gait_min_duration,
+                       'gait_disruption_max_time_to_immobility': gait_disruption_max_time_to_immobility,
+                       #'merge_events_max_inbetween_time': merge_events_max_inbetween_time,
+                       'sliding_window_size_to_compute_speed': sliding_window_size}
+        self._add_to_logs(logs_to_add = logs_to_add)
         for bodypart in self.bodyparts.values():
             bodypart.calculate_speed_and_identify_immobility(sliding_window_size = sliding_window_size, immobility_threshold = immobility_max_rolling_speed)
         self.behavior_df = self._create_behavior_df(bodyparts_to_include = bodyparts_to_include_in_behavior_df)
@@ -590,15 +627,7 @@ class RecordingTop(ABC):
         self._add_event_bouts_to_behavior_df(event_type = 'gait_bout', events = gait_events)
         gait_disruption_events = self._get_gait_disruption_events(gait_events = gait_events, 
                                                                   gait_disruption_max_time_to_immobility = gait_disruption_max_time_to_immobility)
-        self._add_event_bouts_to_behavior_df(event_type = 'gait_disruption_bout', events = gait_disruption_events)
-        #self.log['rolling_speed_sliding_window_size'] = sliding_window_size
-        #self.log['bodyparts_for_direction_front_to_back'] = bodyparts_for_direction_front_to_back
-        #self.log['immobility_max_rolling_speed'] = immobility_max_rolling_speed
-        #self.log['gait_min_rolling_speed'] = gait_min_rolling_speed
-        #self.log['gait_min_duration'] = gait_min_duration
-        #self.log['gait_disruption_min_time'] = gait_disruption_min_time
-        #self.log['freezing_min_time'] = freezing_min_time
-        #self.log['merge_events_max_inbetween_time'] = merge_events_max_inbetween_time        
+        self._add_event_bouts_to_behavior_df(event_type = 'gait_disruption_bout', events = gait_disruption_events)      
 
         
     def _create_behavior_df(self, bodyparts_to_include: List[str]) -> pd.DataFrame:
@@ -710,22 +739,16 @@ class RecordingTop(ABC):
         return interval_idxs[0], interval_idxs[-1]
     
     
-    def export_results(self) -> None:
-        immobility_bout_results_per_level = self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'immobility_bout')
-        freezing_bout_results_per_level = self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'freezing_bout')
-        gait_disruption_results_per_level = self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'gait_disruption_bout')
-        gait_results_per_level = self._export_gait_related_bouts(df = self.behavior_df, event_type = 'gait_bout')
-        self.exported_dfs = {'immobility_bouts': immobility_bout_results_per_level,
-                            'freezing_bouts': freezing_bout_results_per_level, 
-                            'gait_disruption_bouts': gait_disruption_results_per_level, 
-                            'gait_bouts': gait_results_per_level}
-        output_filepath = self.filepath.parent.joinpath(f'{self.filepath.name[:-4]}_event_level_results.xlsx')
-        writer = pd.ExcelWriter(output_filepath, engine='xlsxwriter')
-        for bout_type, df in self.exported_dfs.items():
-            df.to_excel(writer, sheet_name = bout_type)
-        writer.save()
-    
-    
+    def export_results(self, out_dir_path: Path) -> None:
+        dfs_to_export = {'immobility_bouts': self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'immobility_bout'),
+                         'freezing_bouts': self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'freezing_bout'), 
+                         'gait_disruption_bouts': self._export_immobility_related_bouts(df = self.behavior_df, event_type = 'gait_disruption_bout'), 
+                         'gait_bouts': self._export_gait_related_bouts(df = self.behavior_df, event_type = 'gait_bout')}
+        dfs_to_export['session_overview'] = self._create_session_overview_df(dfs_to_export_with_individual_bout_dfs = dfs_to_export)
+        dfs_to_export['parameter_settings'] = self._create_parameter_settings_df()
+        self._write_xlsx_file_to_disk(dfs_to_export = dfs_to_export, out_dir_path = out_dir_path)
+                                           
+                                           
     def _export_immobility_related_bouts(self, df: pd.DataFrame, event_type: str) -> pd.DataFrame:
         results_per_event = {'bout_id': [],
                             'duration': [],
@@ -831,7 +854,72 @@ class RecordingTop(ABC):
         for event_id in event_ids:
             interval_border_idxs.append(df.loc[df[f'{event_type}_id'] == event_id].index.values[[0, -1]])
         return np.asarray(interval_border_idxs)
-       
+
+
+    def _create_session_overview_df(self, dfs_to_export_with_individual_bout_dfs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        session_overview = {'bout_type': [],
+                            'total_bouts_count': [],
+                            'total_duration': [],
+                            'mean_duration': [],
+                            'mean_CenterOfGravity_x': []}
+        for tab_name, df in dfs_to_export_with_individual_bout_dfs.items():
+            bout_ids_split_depending_on_direction = self._get_bout_id_splits_depending_on_direction(df = df)
+            for split_id, relevant_bout_ids in bout_ids_split_depending_on_direction.items():
+                session_overview = self._add_results_to_session_overview(session_overview = session_overview, 
+                                                                         df = df, 
+                                                                         event_type = tab_name, 
+                                                                         event_prefix = split_id, 
+                                                                         bout_ids = relevant_bout_ids)
+        return pd.DataFrame(data = session_overview)
+
+
+    def _get_bout_id_splits_depending_on_direction(self, df: pd.DataFrame) -> Dict[str, List[float]]:
+        towards_open_column_name = self._get_column_name_from_substring(all_columns = list(df.columns), substring = 'towards_open')
+        bout_ids_split_by_direction = {'all': list(df['bout_id'].unique()),
+                                       'towards_open': list(df.loc[df[towards_open_column_name] == True, 'bout_id'].unique()),
+                                       'towards_closed': list(df.loc[df[towards_open_column_name] != True, 'bout_id'].unique())}
+        return bout_ids_split_by_direction                                                                                   
+
+    
+    def _get_column_name_from_substring(self, all_columns: List[str], substring: str) -> str:
+        matching_column_names = [column_name for column_name in all_columns if substring in column_name]
+        assert len(matching_column_names) == 1, \
+                f'There should be exactly one match for {substring} - however, {len(matching_column_names)} were found: [{matching_column_names}].'
+        return matching_column_names[0]
+    
+
+    def _add_results_to_session_overview(self, session_overview: Dict, df: pd.DataFrame, event_type: str, event_prefix: str, bout_ids: List[float]) -> Dict:
+        session_overview['bout_type'].append(f'{event_prefix}_{event_type}')
+        if len(bout_ids) > 0:
+            session_overview['total_bouts_count'].append(len(bout_ids))
+            session_overview['total_duration'].append(df.loc[df['bout_id'].isin(bout_ids), 'duration'].cumsum().iloc[-1])
+            session_overview['mean_duration'].append(df.loc[df['bout_id'].isin(bout_ids), 'duration'].mean())
+            center_of_gravity_x_column_name = self._get_column_name_from_substring(all_columns = list(df.columns), substring = 'CenterOfGravity_x')
+            session_overview['mean_CenterOfGravity_x'].append(df.loc[df['bout_id'].isin(bout_ids), center_of_gravity_x_column_name].mean())
+        else:
+            session_overview['total_bouts_count'].append(0)
+            session_overview['total_duration'].append(0)
+            session_overview['mean_duration'].append(np.nan)
+            session_overview['mean_CenterOfGravity_x'].append(np.nan)            
+        return session_overview
+    
+    
+    def _create_parameter_settings_df(self) -> pd.DataFrame:
+        logged_settings = {'parameter': [], 'specified_value': []}
+        for parameter, value in self.logs.items():
+            logged_settings['parameter'].append(parameter)
+            logged_settings['specified_value'].append(value)
+        return pd.DataFrame(data = logged_settings)
+    
+    
+    def _write_xlsx_file_to_disk(self, dfs_to_export: Dict[str, pd.DataFrame], out_dir_path: Path) -> None:
+        output_filepath = out_dir_path.joinpath(f'{self.metadata["animal"]}_{self.metadata["paradigm"]}_week-{self.week_id}_results.xlsx')
+        writer = pd.ExcelWriter(output_filepath, engine='xlsxwriter')
+        for tab_name, df in dfs_to_export.items():
+            df.to_excel(writer, sheet_name = tab_name)
+        writer.save()
+
+
                 
 class Bodypart2D():
     """
@@ -905,64 +993,4 @@ class Bodypart2D():
     
     def _add_immobility_to_df(self, immobility_threshold: float) -> None:
         self.df.loc[:, 'immobility'] = False
-        self.df.loc[self.df['rolling_speed_cm_per_s'] < immobility_threshold, 'immobility'] = True     
-
-
-
-
-
-
-class EventSeries(ABC):
-    @property
-    def merge_threshold(self)->float:
-        #in seconds
-        return 0.2
-    
-    
-    def __init__(self, range_end: int, events: List, event_type: str, fps: int, range_start: int = 0):
-        self.events = self._merge_events(events = events, fps = fps)
-        self.event_type = event_type
-        
-    def _merge_events(self, events: List, fps:int)->List:
-        events_to_keep = []  
-        for i in range(len(events)-1):
-            try:
-                events[i+1]
-            except IndexError:
-                break
-            if ((events[i+1].start_index - events[i].end_index)/fps) < self.merge_threshold:
-                j = i + 1
-                try: 
-                    events[j+1]
-                    while ((events[j].start_index - events[i].end_index)/fps) < self.merge_threshold:
-                        j += 1
-                except IndexError: 
-                    j -= 1
-                events_to_keep.append(EventBout2D(start_index = events[i].start_index, end_index = events[j].end_index, fps=fps))
-                for n in range(i, j):
-                    try:
-                        events.pop(n+1)
-                    except IndexError:
-                        break
-            else:
-                events_to_keep.append(events[i])
-        return events_to_keep
-        
-    def run_basic_operations_on_events(self, facing_towards_open_end: pd.Series, centerofgravity: Bodypart2D):
-        for i, event in enumerate(self.events):
-            event.check_direction(facing_towards_open_end=facing_towards_open_end)
-            event.check_that_freezing_threshold_was_reached()
-            event.get_position(centerofgravity= centerofgravity)
-            event.id = i
-        
-            
-    def calculate_statistics(self):
-        data = [{'duration': event.duration, 'x_position': event.x_position, 'id': event.id, 'facing_towards_open_end': event.facing_towards_open_end} for event in self.events]
-        self.df = pd.DataFrame(data = data)
-        self.mean_x_position = self.df['x_position'].mean()
-        self.mean_duration = self.df['duration'].mean()
-        self.total_duration = self.df['duration'].sum()
-        self.total_count = len(self.events)
-        self.mean_x_position_facing_open = self.df.loc[self.df['facing_towards_open_end'] == True, 'x_position'].mean()
-        self.mean_duration_facing_open = self.df.loc[self.df['facing_towards_open_end'] == True, 'duration'].mean()
-        self.total_count_facing_open = len([event for event in self.events if event.facing_towards_open_end])
+        self.df.loc[self.df['rolling_speed_cm_per_s'] < immobility_threshold, 'immobility'] = True
