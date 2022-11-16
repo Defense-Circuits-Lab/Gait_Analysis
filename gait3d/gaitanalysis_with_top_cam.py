@@ -224,10 +224,10 @@ class RecordingTop():
         marker_ids_to_preprocess = self._get_preprocessing_relevant_marker_ids(df = self.full_df_from_file)
         smoothed_df = self._smooth_tracked_coords_and_likelihood(marker_ids = marker_ids_to_preprocess, window_length = window_length, polyorder = 3)
         interpolated_df = self._interpolate_low_likelihood_intervals(df = smoothed_df, marker_ids = marker_ids_to_preprocess, max_interval_length = window_length)
-        interpolated_df_with_cog = self._add_new_marker_derived_existing_markers(df = interpolated_df,
-                                                                                 existing_markers = marker_ids_to_compute_center_of_gravity,
-                                                                                 new_marker_id = 'CenterOfGravity',
-                                                                                 likelihood_threshold = likelihood_threshold)
+        interpolated_df_with_cog = self._add_new_marker_derived_from_existing_markers(df = interpolated_df,
+                                                                                      existing_markers = marker_ids_to_compute_center_of_gravity,
+                                                                                      new_marker_id = 'CenterOfGravity',
+                                                                                      likelihood_threshold = likelihood_threshold)
         preprocessed_df = self._interpolate_low_likelihood_intervals(df = interpolated_df_with_cog,
                                                                      marker_ids = ['CenterOfGravity'],
                                                                      max_interval_length = window_length)
@@ -373,7 +373,7 @@ class RecordingTop():
         return interval_border_idxs    
     
 
-    def _add_new_marker_derived_existing_markers(self, df: pd.DataFrame, existing_markers: List[str], new_marker_id: str, likelihood_threshold: float = 0.5)->None:
+    def _add_new_marker_derived_from_existing_markers(self, df: pd.DataFrame, existing_markers: List[str], new_marker_id: str, likelihood_threshold: float = 0.5)->None:
         df_with_new_marker = df.copy()
         for coordinate in ['x', 'y']:
             df_with_new_marker[f'{new_marker_id}_{coordinate}'] = (sum([df_with_new_marker[f'{marker_id}_{coordinate}'] for marker_id in existing_markers]))/len(existing_markers)
