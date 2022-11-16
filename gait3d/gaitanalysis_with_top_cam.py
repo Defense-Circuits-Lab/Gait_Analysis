@@ -758,7 +758,8 @@ class RecordingTop():
         results_per_event = {'bout_id': [],
                             'duration': [],
                             'CenterOfGravity_x_at_bout_start': [],
-                            'towards_open_at_bout_start': [], 
+                            'towards_open_at_bout_start': [],
+                            'distance_covered_cm': [], 
                             'start_time': [],
                             'end_time': []}
         results_per_event['bout_id'] = self._get_all_bout_ids(df = df, event_type = event_type)
@@ -774,6 +775,10 @@ class RecordingTop():
                                                                                             event_ids = results_per_event['bout_id'],
                                                                                             column_name = 'facing_towards_open_end')
             results_per_event['towards_open_at_bout_start'] = direction_towards_open_at_interval_borders[:, 0]
+            results_per_event['distance_covered_cm'] = self._get_distance_covered_per_event(df = df, 
+                                                                                       event_type = event_type,
+                                                                                       event_ids = results_per_event['bout_id'],
+                                                                                       marker_id = 'CenterOfGravity')
             bout_start_and_end_idxs = self._get_interval_start_and_end_idxs_per_event(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
             results_per_event['start_time'] = bout_start_and_end_idxs[:, 0]
             results_per_event['end_time'] = bout_start_and_end_idxs[:, 1]
@@ -866,7 +871,9 @@ class RecordingTop():
         session_overview = {'bout_type': [],
                             'total_bouts_count': [],
                             'total_duration': [],
+                            'total_distance_covered': [],
                             'mean_duration': [],
+                            'mean_distance_covered': [],
                             'mean_CenterOfGravity_x': []}
         for tab_name, df in dfs_to_export_with_individual_bout_dfs.items():
             bout_ids_split_depending_on_direction = self._get_bout_id_splits_depending_on_direction(df = df)
@@ -899,13 +906,17 @@ class RecordingTop():
         if len(bout_ids) > 0:
             session_overview['total_bouts_count'].append(len(bout_ids))
             session_overview['total_duration'].append(df.loc[df['bout_id'].isin(bout_ids), 'duration'].cumsum().iloc[-1])
+            session_overview['total_distance_covered'].append(df.loc[df['bout_id'].isin(bout_ids), 'distance_covered_cm'].cumsum().iloc[-1])
             session_overview['mean_duration'].append(df.loc[df['bout_id'].isin(bout_ids), 'duration'].mean())
+            session_overview['mean_distance_covered'].append(df.loc[df['bout_id'].isin(bout_ids), 'distance_covered_cm'].mean())
             center_of_gravity_x_column_name = self._get_column_name_from_substring(all_columns = list(df.columns), substring = 'CenterOfGravity_x')
             session_overview['mean_CenterOfGravity_x'].append(df.loc[df['bout_id'].isin(bout_ids), center_of_gravity_x_column_name].mean())
         else:
             session_overview['total_bouts_count'].append(0)
             session_overview['total_duration'].append(0)
+            session_overview['total_distance_covered'].append(0)
             session_overview['mean_duration'].append(np.nan)
+            session_overview['mean_distance_covered'].append(np.nan)
             session_overview['mean_CenterOfGravity_x'].append(np.nan)            
         return session_overview
     
