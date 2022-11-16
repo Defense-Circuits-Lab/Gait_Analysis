@@ -759,8 +759,8 @@ class RecordingTop():
                             'duration': [],
                             'CenterOfGravity_x_at_bout_start': [],
                             'towards_open_at_bout_start': [], 
-                            'start_idx': [],
-                            'end_idx': []}
+                            'start_time': [],
+                            'end_time': []}
         results_per_event['bout_id'] = self._get_all_bout_ids(df = df, event_type = event_type)
         if len(results_per_event['bout_id']) >= 1:
             results_per_event['duration'] = self._get_bout_duration_per_bout_id(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
@@ -775,8 +775,8 @@ class RecordingTop():
                                                                                             column_name = 'facing_towards_open_end')
             results_per_event['towards_open_at_bout_start'] = direction_towards_open_at_interval_borders[:, 0]
             bout_start_and_end_idxs = self._get_interval_start_and_end_idxs_per_event(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
-            results_per_event['start_idx'] = bout_start_and_end_idxs[:, 0]
-            results_per_event['end_idx'] = bout_start_and_end_idxs[:, 1]
+            results_per_event['start_time'] = bout_start_and_end_idxs[:, 0]
+            results_per_event['end_time'] = bout_start_and_end_idxs[:, 1]
         return pd.DataFrame(data = results_per_event)
     
        
@@ -788,8 +788,8 @@ class RecordingTop():
                             'towards_open_at_bout_end': [],
                             #'mean_rolling_speed_cm_per_s': [],
                             'distance_covered_cm': [], 
-                            'start_idx': [],
-                            'end_idx': []}
+                            'start_time': [],
+                            'end_time': []}
         results_per_event['bout_id'] = self._get_all_bout_ids(df = df, event_type = event_type)
         if len(results_per_event['bout_id']) >= 1:
             results_per_event['duration'] = self._get_bout_duration_per_bout_id(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
@@ -814,8 +814,8 @@ class RecordingTop():
                                                                                        event_ids = results_per_event['bout_id'],
                                                                                        marker_id = 'CenterOfGravity')
             bout_start_and_end_idxs = self._get_interval_start_and_end_idxs_per_event(df = df, event_type = event_type, event_ids = results_per_event['bout_id'])
-            results_per_event['start_idx'] = bout_start_and_end_idxs[:, 0]
-            results_per_event['end_idx'] = bout_start_and_end_idxs[:, 1]
+            results_per_event['start_time'] = bout_start_and_end_idxs[:, 0]
+            results_per_event['end_time'] = bout_start_and_end_idxs[:, 1]
         return pd.DataFrame(data = results_per_event)
 
     
@@ -857,7 +857,8 @@ class RecordingTop():
     def _get_interval_start_and_end_idxs_per_event(self, df: pd.DataFrame, event_type: str, event_ids: List[float]) -> np.ndarray:
         interval_border_idxs = []
         for event_id in event_ids:
-            interval_border_idxs.append(df.loc[df[f'{event_type}_id'] == event_id].index.values[[0, -1]])
+            start_time, end_time = df.loc[df[f'{event_type}_id'] == event_id].index.values[[0, -1]]*self.framerate
+            interval_border_idxs.append((start_time, end_time))
         return np.asarray(interval_border_idxs)
 
 
