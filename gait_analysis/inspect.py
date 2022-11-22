@@ -123,7 +123,7 @@ def filter_dataframe(df: pd.DataFrame, filter_criteria: List[Tuple]) -> pd.DataF
     df_filtered = df.loc[shared_valid_idxs_across_all_criteria, :].copy()
     return df_filtered
 
-# %% ../nbs/02_inspect.ipynb 23
+# %% ../nbs/02_inspect.ipynb 19
 def plot(
     df: pd.DataFrame,  # the DataFrame that contains the data you´d like to plot
     x_column: str,  # the column name of the data that should be visualized on the x-axis
@@ -155,7 +155,7 @@ def plot(
         ax.get_legend().remove()
     plt.show()
 
-# %% ../nbs/02_inspect.ipynb 26
+# %% ../nbs/02_inspect.ipynb 22
 def check_data_availability(
     root_dir_path: Path, all_week_ids: List[int], all_paradigm_ids: List[str]
 ) -> pd.DataFrame:
