@@ -1,0 +1,34 @@
+{
+  "info": {
+    "subdir": "noarch"
+  },
+  "packages": {
+    "gait_analysis-0.0.1-py_0.tar.bz2": {
+      "build": "py_0",
+      "build_number": 0,
+      "depends": [
+        "black",
+        "imageio >=2.19.3",
+        "packaging",
+        "pip",
+        "python",
+        "scipy >=1.7.3",
+        "seaborn",
+        "tqdm"
+      ],
+      "license": "Apache Software",
+      "license_family": "APACHE",
+      "md5": "fafeb9a1a9f15d3cd4041493a2a57289",
+      "name": "gait_analysis",
+      "noarch": "python",
+      "sha256": "c2ce21722d8b109edbd4015b5d6b630670843c7d5dcd3f333610c55ca5f2a822",
+      "size": 38205,
+      "subdir": "noarch",
+      "timestamp": 1669630478808,
+      "version": "0.0.1"
+    }
+  },
+  "packages.conda": {},
+  "removed": [],
+  "repodata_version": 1
+}
