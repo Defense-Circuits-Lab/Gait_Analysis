@@ -92,20 +92,29 @@ def interpolate_low_likelihood_intervals(
             framerate=framerate,
         )
         for start_idx, end_idx in low_likelihood_interval_border_idxs:
-            if (start_idx - 1 >= 0) and (end_idx + 2 < interpolated_df.shape[0]):
+            if end_idx + 1 < interpolated_df.shape[0]:
                 interpolated_df[f"{marker_id}_x"][
-                    start_idx - 1 : end_idx + 2
-                ] = interpolated_df[f"{marker_id}_x"][
-                    start_idx - 1 : end_idx + 2
-                ].interpolate()
-                interpolated_df[f"{marker_id}_y"][
-                    start_idx - 1 : end_idx + 2
-                ] = interpolated_df[f"{marker_id}_y"][
-                    start_idx - 1 : end_idx + 2
-                ].interpolate()
-                interpolated_df[f"{marker_id}_likelihood"][
                     start_idx : end_idx + 1
-                ] = 0.5
+                ] = np.NaN
+                interpolated_df[f"{marker_id}_y"][
+                    start_idx : end_idx + 1
+                ] = np.NaN
+        for start_idx, end_idx in low_likelihood_interval_border_idxs:
+            if (start_idx - 1 >= 0) and (end_idx + 2 < interpolated_df.shape[0]):
+                if (not math.isnan(interpolated_df[f"{marker_id}_x"][end_idx + 2])) and (not math.isnan(interpolated_df[f"{marker_id}_x"][start_idx - 1])):
+                    interpolated_df[f"{marker_id}_x"][
+                        start_idx - 1 : end_idx + 2
+                    ] = interpolated_df[f"{marker_id}_x"][
+                        start_idx - 1 : end_idx + 2
+                    ].interpolate()
+                    interpolated_df[f"{marker_id}_y"][
+                        start_idx - 1 : end_idx + 2
+                    ] = interpolated_df[f"{marker_id}_y"][
+                        start_idx - 1 : end_idx + 2
+                    ].interpolate()
+                    interpolated_df[f"{marker_id}_likelihood"][
+                        start_idx : end_idx + 1
+                    ] = 0.5
     return interpolated_df
 
 # %% ../../nbs/01_twoD_02_preprocess.ipynb 8
