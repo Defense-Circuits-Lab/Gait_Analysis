@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.3.361">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="Collection of functions that enable the visualization and inspection of obtained results in just a few lines of code">
+
+<title>gait_analysis - inspect</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<script src="site_libs/quarto-html/quarto.js"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 20,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+<link rel="stylesheet" href="styles.css">
+<meta property="og:title" content="gait_analysis - inspect">
+<meta property="og:description" content="Collection of functions that enable the visualization and inspection of obtained results in just a few lines of code">
+<meta property="og:site-name" content="gait_analysis">
+<meta name="twitter:title" content="gait_analysis - inspect">
+<meta name="twitter:description" content="Collection of functions that enable the visualization and inspection of obtained results in just a few lines of code">
+<meta name="twitter:card" content="summary">
+</head>
+
+<body class="nav-sidebar floating nav-fixed">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg navbar-dark ">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container">
+    <a class="navbar-brand" href="./index.html">
+    <span class="navbar-title">gait_analysis</span>
+    </a>
+  </div>
+        <div class="quarto-navbar-tools ms-auto">
+</div>
+          <div id="quarto-search" class="" title="Search"></div>
+      </div> <!-- /container-fluid -->
+    </nav>
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar,#quarto-sidebar-glass" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+      <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="./inspect.html">inspect</a></li></ol></nav>
+      <a class="flex-grow-1" role="button" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar,#quarto-sidebar-glass" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+      </a>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal sidebar-navigation floating overflow-auto">
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">gait analysis</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./core.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">core</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./twod_00_utils.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">twoD/utils</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./twod_01_cam_interfaces.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">twoD/cam_interfaces</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./twod_02_preprocess.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">twoD/preprocess</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./twod_03_detect.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">twoD/detect</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./twod_04_export.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">twoD/export</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./inspect.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">inspect</span></a>
+  </div>
+</li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar,#quarto-sidebar-glass"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#example-usage" id="toc-example-usage" class="nav-link active" data-scroll-target="#example-usage">Example usage:</a>
+  <ul class="collapse">
+  <li><a href="#helper-functions" id="toc-helper-functions" class="nav-link" data-scroll-target="#helper-functions">Helper functions:</a></li>
+  <li><a href="#get_only_matching_xlsx_files" id="toc-get_only_matching_xlsx_files" class="nav-link" data-scroll-target="#get_only_matching_xlsx_files">get_only_matching_xlsx_files</a></li>
+  <li><a href="#get_metadata_from_filename" id="toc-get_metadata_from_filename" class="nav-link" data-scroll-target="#get_metadata_from_filename">get_metadata_from_filename</a></li>
+  <li><a href="#load-all-data" id="toc-load-all-data" class="nav-link" data-scroll-target="#load-all-data">1) Load all data:</a></li>
+  <li><a href="#collect_all_available_data" id="toc-collect_all_available_data" class="nav-link" data-scroll-target="#collect_all_available_data">collect_all_available_data</a></li>
+  <li><a href="#filter-your-data-optional" id="toc-filter-your-data-optional" class="nav-link" data-scroll-target="#filter-your-data-optional">2) Filter your data (optional):</a></li>
+  <li><a href="#filter_dataframe" id="toc-filter_dataframe" class="nav-link" data-scroll-target="#filter_dataframe">filter_dataframe</a></li>
+  <li><a href="#plotting" id="toc-plotting" class="nav-link" data-scroll-target="#plotting">3) Plotting:</a></li>
+  <li><a href="#plot" id="toc-plot" class="nav-link" data-scroll-target="#plot">plot</a></li>
+  <li><a href="#check_data_availability" id="toc-check_data_availability" class="nav-link" data-scroll-target="#check_data_availability">check_data_availability</a></li>
+  </ul></li>
+  </ul>
+<div class="toc-actions"><div><i class="bi bi-github"></i></div><div class="action-links"><p><a href="https://github.com/Defense-Circuits-Lab/Gait_Analysis/issues/new" class="toc-action">Report an issue</a></p></div></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">inspect</h1>
+</div>
+
+<div>
+  <div class="description">
+    Collection of functions that enable the visualization and inspection of obtained results in just a few lines of code
+  </div>
+</div>
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+</header>
+
+<!-- WARNING: THIS FILE WAS AUTOGENERATED! DO NOT EDIT! -->
+<section id="example-usage" class="level2">
+<h2 class="anchored" data-anchor-id="example-usage">Example usage:</h2>
+<section id="helper-functions" class="level3">
+<h3 class="anchored" data-anchor-id="helper-functions">Helper functions:</h3>
+<p>Before starting with the example usage, let´s quickly define two helper functions that we will need:</p>
+<hr>
+<p><a href="https://github.com/Defense-Circuits-Lab/Gait_Analysis/blob/main/gait_analysis/inspect.py#L17" target="_blank" style="float:right; font-size:smaller">source</a></p>
+</section>
+<section id="get_only_matching_xlsx_files" class="level3">
+<h3 class="anchored" data-anchor-id="get_only_matching_xlsx_files">get_only_matching_xlsx_files</h3>
+<blockquote class="blockquote">
+<pre><code> get_only_matching_xlsx_files (dir_path:pathlib.Path, paradigm_id:str,
+                               week_id:Optional[int]=None)</code></pre>
+</blockquote>
+<hr>
+<p><a href="https://github.com/Defense-Circuits-Lab/Gait_Analysis/blob/main/gait_analysis/inspect.py#L31" target="_blank" style="float:right; font-size:smaller">source</a></p>
+</section>
+<section id="get_metadata_from_filename" class="level3">
+<h3 class="anchored" data-anchor-id="get_metadata_from_filename">get_metadata_from_filename</h3>
+<blockquote class="blockquote">
+<pre><code> get_metadata_from_filename (filepath_session_results:pathlib.Path,
+                             group_assignment_filepath:pathlib.Path)</code></pre>
+</blockquote>
+</section>
+<section id="load-all-data" class="level3">
+<h3 class="anchored" data-anchor-id="load-all-data">1) Load all data:</h3>
+<p>This obviously assumes that you were using the <code>gait_analysis</code> package to analyze your 2D tracking data created the corresponding result exports. To get some quick insights into your data, feel free to use the following collection of functions.</p>
+<p>First, you need to provide the filepath to the exported Excel files as <code>root_dir_path</code> as a Path object (see exmaple below). You can also specify if you´d like to right away filter only for a certain set of weeks or paradigms (you can also just pass a list with a single value for each). Please note that you have to provide the exact name of the respective Excel Tab you are interested in as: <code>sheet_name</code>.</p>
+<p>Note: The group_assignment Excel Sheet is still quite customized &amp; should be replaced by a more generalizable configs file (e.g.&nbsp;.yaml) in future versions.</p>
+<hr>
+<p><a href="https://github.com/Defense-Circuits-Lab/Gait_Analysis/blob/main/gait_analysis/inspect.py#L63" target="_blank" style="float:right; font-size:smaller">source</a></p>
+</section>
+<section id="collect_all_available_data" class="level3">
+<h3 class="anchored" data-anchor-id="collect_all_available_data">collect_all_available_data</h3>
+<blockquote class="blockquote">
+<pre><code> collect_all_available_data (root_dir_path:pathlib.Path,
+                             group_assignment_filepath:pathlib.Path,
+                             paradigm_ids:List[str], week_ids:List[str],
+                             sheet_name:str)</code></pre>
+</blockquote>
+<table class="table">
+<colgroup>
+<col style="width: 9%">
+<col style="width: 38%">
+<col style="width: 52%">
+</colgroup>
+<thead>
+<tr class="header">
+<th></th>
+<th><strong>Type</strong></th>
+<th><strong>Details</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>root_dir_path</td>
+<td>Path</td>
+<td>Filepath to the directory that contains the exported results .xlsx files</td>
+</tr>
+<tr class="even">
+<td>group_assignment_filepath</td>
+<td>Path</td>
+<td>Filepath to the group_assignments.xlsx file</td>
+</tr>
+<tr class="odd">
+<td>paradigm_ids</td>
+<td>typing.List[str]</td>
+<td>List of paradigms of which the results shall be loaded</td>
+</tr>
+<tr class="even">
+<td>week_ids</td>
+<td>typing.List[str]</td>
+<td>List of weeks from which the results shall be loaded</td>
+</tr>
+<tr class="odd">
+<td>sheet_name</td>
+<td>str</td>
+<td>Tab name of the exported results sheet to load, e.g.&nbsp;“session_overview”</td>
+</tr>
+<tr class="even">
+<td><strong>Returns</strong></td>
+<td><strong>DataFrame</strong></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>For instance, if you´d like to inspect the overall session overview, use:</p>
+<pre><code>df = collect_all_available_data(root_dir_path = Path('/path/to/your/directory/with/the/exported/retults/'),
+                                group_assignment_filepath = Path('/filepath/to/your/group_assignment.xlsx'),
+                                paradigm_ids = ['paradigm_a', 'paradigm_b', 'paradigm_c'],
+                                week_ids = [1, 4, 8, 12, 14],
+                                sheet_name = 'session_overview')</code></pre>
+</section>
+<section id="filter-your-data-optional" class="level3">
+<h3 class="anchored" data-anchor-id="filter-your-data-optional">2) Filter your data (optional):</h3>
+<p>You might want to filter your data to only inspect a specific proportion of it. You can do so quite easily by using the <code>filter_dataframe()</code> funtion (see example usage below):</p>
+<hr>
+<p><a href="https://github.com/Defense-Circuits-Lab/Gait_Analysis/blob/main/gait_analysis/inspect.py#L91" target="_blank" style="float:right; font-size:smaller">source</a></p>
+</section>
+<section id="filter_dataframe" class="level3">
+<h3 class="anchored" data-anchor-id="filter_dataframe">filter_dataframe</h3>
+<blockquote class="blockquote">
+<pre><code> filter_dataframe (df:pandas.core.frame.DataFrame,
+                   filter_criteria:List[Tuple])</code></pre>
+</blockquote>
+<p>You need to specify your filter criteria in a list of tuples, for which each tuple follows this schema: &gt; (column_name, comparison_method, reference_value)</p>
+<p>So for instance, if you´d like to filter your dataframe by selecting only the data of all freezing bouts, you would add a tuple that specifies that you want all rows from the column “bout_type” that have the value “all_freezing_bouts”: &gt; <code>('bout_type', 'equal_to', 'all_freezing_bouts')</code></p>
+<p>You can also add more criteria with additional tuples, for instance to filter for specific mouse lines your filter criteria would look like this: &gt; <code>('line_id', 'is_in_list', ['206', '209'])</code></p>
+<p>Bringing it together, you´d define your filter_criteria in a list of these tuples:</p>
+<pre><code>filter_criteria = [('line_id', 'is_in_list', ['206', '209']),
+                   ('bout_type', 'equal_to', 'all_freezing_bouts')]</code></pre>
+<p>You can add as many tuples (= criteria) you´d like. Currently implemented comparison methods include: - “greater”: selects only rows in which the values of the column are greater than the reference value - “smaller”: selects only rows in which the values of the column are smaller than the reference value - “equal_to”: selects only rows in which the values of the column are equal to the reference value - “is_in_list”: selects only rows in which the values of the column are matching to an element in the reference value (which has to be a list, in this case) - “is_nan”: selects only rows in which the values of the column are NaN</p>
+<p>You can then pass the <code>filter_criteria</code> along your dataframe to the <code>filter_dataframe()</code> function:</p>
+<pre><code>df_filtered = filter_dataframe(df = df, filter_criteria = filter_criteria)</code></pre>
+</section>
+<section id="plotting" class="level3">
+<h3 class="anchored" data-anchor-id="plotting">3) Plotting:</h3>
+<p>Eventually, you can also plot your data, filtering it even more, if you´d like to. When you´re using the <code>plot()</code> function, you can specify the following parameters (see function documentation and example usage below):</p>
+<hr>
+<p><a href="https://github.com/Defense-Circuits-Lab/Gait_Analysis/blob/main/gait_analysis/inspect.py#L127" target="_blank" style="float:right; font-size:smaller">source</a></p>
+</section>
+<section id="plot" class="level3">
+<h3 class="anchored" data-anchor-id="plot">plot</h3>
+<blockquote class="blockquote">
+<pre><code> plot (df:pandas.core.frame.DataFrame, x_column:str, y_column:str,
+       plot_type:str='violinplot', hue_column:Optional[str]=None,
+       hide_legend:bool=True)</code></pre>
+</blockquote>
+<table class="table">
+<colgroup>
+<col style="width: 6%">
+<col style="width: 25%">
+<col style="width: 34%">
+<col style="width: 34%">
+</colgroup>
+<thead>
+<tr class="header">
+<th></th>
+<th><strong>Type</strong></th>
+<th><strong>Default</strong></th>
+<th><strong>Details</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>df</td>
+<td>DataFrame</td>
+<td></td>
+<td>the DataFrame that contains the data you´d like to plot</td>
+</tr>
+<tr class="even">
+<td>x_column</td>
+<td>str</td>
+<td></td>
+<td>the column name of the data that should be visualized on the x-axis</td>
+</tr>
+<tr class="odd">
+<td>y_column</td>
+<td>str</td>
+<td></td>
+<td>the column name of the data that should be visualized on the y-axis</td>
+</tr>
+<tr class="even">
+<td>plot_type</td>
+<td>str</td>
+<td>violinplot</td>
+<td>currently only “violinplot” and “stripplot” are implemented</td>
+</tr>
+<tr class="odd">
+<td>hue_column</td>
+<td>typing.Optional[str]</td>
+<td>None</td>
+<td>if you´d like to use the data of a column to color-code the plotted, you can specify it here (see example below)</td>
+</tr>
+<tr class="even">
+<td>hide_legend</td>
+<td>bool</td>
+<td>True</td>
+<td>pass along as <code>False</code> if you´d like the legend of the plot to be displayed</td>
+</tr>
+<tr class="odd">
+<td><strong>Returns</strong></td>
+<td><strong>None</strong></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<pre><code>plot(df = df_filtered, x_column = 'group_id', y_column = 'total_duration', hue_column = 'week_id')</code></pre>
+<p>You can also use the following function to create a DataFrame that gives you an overview of your data availability:</p>
+<hr>
+<p><a href="https://github.com/Defense-Circuits-Lab/Gait_Analysis/blob/main/gait_analysis/inspect.py#L159" target="_blank" style="float:right; font-size:smaller">source</a></p>
+</section>
+<section id="check_data_availability" class="level3">
+<h3 class="anchored" data-anchor-id="check_data_availability">check_data_availability</h3>
+<blockquote class="blockquote">
+<pre><code> check_data_availability (root_dir_path:pathlib.Path,
+                          all_week_ids:List[int],
+                          all_paradigm_ids:List[str])</code></pre>
+</blockquote>
+
+
+</section>
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button', {
+    text: function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+  });
+  clipboard.on('success', function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  });
+  function tippyHover(el, contentFn) {
+    const config = {
+      allowHTML: true,
+      content: contentFn,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start'
+    };
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      return note.innerHTML;
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+</div> <!-- /content -->
+
+
+
+</body></html>
